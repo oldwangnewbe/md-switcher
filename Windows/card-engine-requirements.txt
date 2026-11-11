@@ -1,0 +1,11 @@
+UnityPy==1.23.0
+Pillow==11.3.0
+archspec==0.2.7
+astc-encoder-py==0.1.12
+attrs==26.1.0
+brotli==1.2.1
+etcpak==0.9.15
+fsspec==2025.10.0
+lz4==4.4.5
+pyfmodex==0.7.2
+texture2ddecoder==1.0.6
