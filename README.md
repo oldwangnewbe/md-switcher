@@ -1,48 +1,37 @@
+<p align="center"><img src="assets/AppIcon.png" width="104" alt="MD 换号器图标"></p>
+
 # MD 换号器
 
-在 Apple Silicon Mac 上切换 CrossOver 中已保存的 Steam 账号，并可启动《游戏王 Master Duel》。
+在 Apple Silicon Mac 上切换 CrossOver 里的 Steam 账号，启动《游戏王 Master Duel》，并按账号设置本地异画和动态镜碎。
 
-1. 在 CrossOver 的 Steam 里正常登录各个账号，并勾选记住登录。
-2. 从 [GitHub Releases](https://github.com/oldwangnewbe/md-switcher/releases) 下载 `arm64.dmg`，打开后把 `MD Switcher.app` 拖到「应用程序」。需要 Apple Silicon、macOS 13 或以上和 CrossOver。工具会检测 Master Duel 和 MDPro3，也可从左侧「设置」手动选择安装目录。公开版使用临时签名，尚未通过 Apple 公证，首次运行可能被 Gatekeeper 拦截。
-3. 在左侧选择「账号切换」，选中账号，点击「启动 MD」或「仅切换 Steam」。账号右侧的铅笔可以在列表中编辑昵称。
-4. 若 Steam 要求重新登录或 Steam Guard 验证，在 Steam 窗口中完成。只有核对到目标账号后，工具才会启动游戏。
+**[下载 macOS 安装包](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.13/MD-Switcher-0.9.13-arm64.dmg)** · [查看发行版](https://github.com/oldwangnewbe/md-switcher/releases/latest)
 
-换号前请退出 Master Duel。换号时，应用更新目标 Bottle 的 `loginusers.vdf` 和 Steam 的 `AutoLoginUser`。
+![MD 换号器账号切换页，示例账号列表与启动按钮](docs/images/accounts.png)
 
-第一次使用时，选中已下载完整资源的 Steam 账号，在「游戏资源」里将它设为资源主账号。之后选择小号并点击「切换并启动 MD」，工具会自动识别小号目录并补齐资源和索引。第一次启动全新的小号时，游戏会短暂打开以生成目录，随后工具会关闭这次初始化启动、准备资源，再打开游戏。游戏要求选择语言或完成首次设置时，在游戏中操作到开始画面，退出后重试。
+## 安装与换号
 
-工具在 APFS 上为新号克隆缺少的资源文件和匹配的索引。已准备的小号可以直接启动，各账号分别使用自己的 `LocalSave`。「游戏资源」菜单可以恢复原资源或手动修复旧版索引。恢复后可通过「仅切换 Steam」登录，直接在 Steam 里启动；再次使用「切换并启动 MD」会重新准备资源。
+需要 **Apple Silicon、macOS 13+、CrossOver**，以及装在 CrossOver 容器里的 Steam 和《Master Duel》。安装包已做临时签名，尚未通过 Apple 公证，macOS 首次打开时可能拦截。
 
-在「设置」中开启「复用主账号语言」后，换号器会在小号启动前同步主账号语言。启动时按 CrossOver 当前识别的主屏幕无边框全屏显示。插拔显示器后，如果容器仍报告旧屏幕，会刷新容器会话后启动。
+1. 打开下载的 DMG，把 **MD Switcher.app** 拖到「应用程序」，再从那里打开。
+2. 在 CrossOver 的 Steam 里登录要切换的账号，勾选「记住登录」。返回换号器点「刷新」。
+3. 先退出游戏，再选账号并点「启动 MD」。只想登录 Steam 时，点「仅切换 Steam」。遇到 Steam Guard 验证时，在 Steam 里完成。
 
-「异画合集」内置闪刀姬、烙印和黑魔导预设。可以逐张挑选异画，也可以新建合集。在「卡片搜索」选好异画后点「加入合集」，再回到合集面板整套应用。想整套恢复时，选择「恢复合集原画」。已应用的卡图按账号保存。
+找不到游戏时，在左侧「设置 → 安装目录」手动选择。需要自启动时，在「设置 → 登录与快捷键」点「开启自启动」。换号器在后台运行时，按 **Control + Option + M** 叫回主界面。
 
-给小号准备游戏资源时，换号器会从大号的备份中取出与当前游戏索引匹配的原版卡图。MDPro3 标记为超框的异画会保留全卡面构图，恢复原卡图时同步恢复超框登记。公开版通过「异画合集 → 闪刀姬」使用本机素材。安装本地生成的闪刀快捷素材包后，侧边栏也会出现「闪刀异画」。
+![设置页示例，包含安装目录、登录自启动和全局快捷键](docs/images/settings.png)
 
-点「应用到所有账号」可以把当前的卡图选择批量应用到列表中的账号。还没准备好资源的账号会在下次通过「切换并启动 MD」准备完成后应用。要批量恢复，先点「选整套原画」，再点「应用到所有账号」。
+## 其他功能
 
-「卡片搜索」读取检测到或手动选择的 MDPro3 目录，以及主账号的《大师决斗》卡库。输入任一边的卡名、系列名或卡片编号，确认结果里的两个名称和异画预览。搜「烙印」等系列时，系列成员和相关卡会集中显示，开启「仅看可换异画」可筛掉暂时无法替换的卡。选好卡图后应用到所选账号或所有账号，选「原卡图」可恢复这一张。搜索替换支持已下载到账号资源目录的卡图，并会标出有完整超框素材的异画。卡片搜索在首次构建时下载并随应用附带 Python 库，运行时使用 Mac 开发工具提供的 `/usr/bin/python3`。
+| 想做什么 | 从哪里开始 |
+| --- | --- |
+| 复用已下载的资源 | 选一个下载完成的账号，在「游戏资源」设为资源主账号。之后用换号器启动其他账号。 |
+| 换异画或召唤动画 | 在「设置」选好本机 MDPro3，再到「卡片搜索」选异画并应用，或到「异画合集」批量应用。召唤动画支持替换已有演出。 |
+| 开启动态镜碎 | 在「动态镜碎」选卡并为账号开启。保持换号器在后台，从换号器或 Steam 启动游戏都会加载。效果仅在本机显示。 |
 
-主界面的「动态镜碎」可搜索单卡、为合集整组设置，以及查看当前账号已开启的卡片。换号器运行时，从换号器或 CrossOver 内的 Steam 启动游戏都会自动加载当前 Steam 账号的本地镜碎设置。关闭主窗口后仍会检测 Steam 启动。按 `Control + Option + M` 可在其他应用中叫回主界面。若要随登录启动，在「设置 → 登录与快捷键」开启自启动，必要时到 macOS「登录项与扩展」确认。完全退出换号器后，需要再次打开应用才能使用全局快捷键。
+## 使用前须知
 
-遇到配置写入错误时，工具会尝试恢复本次改动。如果出现「恢复登录设置」，请先正常退出该 Bottle 内的 Steam，再点恢复。待恢复的记录位于 `~/Library/Application Support/MD Switcher/pending-switch.json`。
+- **账号风险**：异画和动画会修改本地游戏资源，动态镜碎会向游戏进程加载 DLL。请自行确认使用方式符合游戏和平台条款，运营方可能限制账号。[KONAMI 使用条款](https://legal.konami.com/games/yugioh_masterduel/terms/tou/cs_other/en/)
+- **文件和兼容性风险**：先备份。游戏或 CrossOver 更新后，功能可能失效、引发崩溃或导致资源重新下载。出现问题时，可退出游戏后恢复原画、演出或备份资源。
+- **个人使用**：本项目独立开发，仅供个人学习和非商业使用，按现状提供。安装包不附带游戏素材，异画和动画从用户本机的 MDPro3 读取。
 
-## 实现方式与素材来源
-
-- **账号与启动**：SwiftUI 界面调用 CrossOver 的 Wine，在目标容器读取 Steam `loginusers.vdf`、进程与注册表。换号时备份并更新登录配置，核对 Steam 实际登录账号后用 App ID `1449850` 启动。工具依赖 Steam 自己处理密码和 Steam Guard。启动参数按当前显示模式设置，语言同步使用本机游戏设置。
-- **资源复用**：使用 APFS 克隆主账号已下载的本地缓存和对应索引，按账号保留存档，并提供备份恢复。操作前核对资源路径、版本和游戏进程状态。
-- **卡图与召唤动画**：通过 MDPro3 本机安装中的卡库、卡片编号映射、`Picture/Art`、`Picture/OverFrame` 和动画素材匹配大师决斗资源。以 UnityPy、Pillow 等处理贴图和 Unity 资源包，校验原始文件与生成结果，保留恢复所需的原件。动画替换用于游戏已有的召唤演出。公开源码和 DMG 不附带 MDPro3 或游戏卡图、动画、游戏资源包，也不分发 Steam 账号或本机存档。
-- **动态镜碎**：换号器读取 Steam 的游戏启动日志并核对当前账号和游戏进程。CrossOver 内运行的原生加载器把渲染 DLL 加载到 `masterduel.exe`，用 MinHook 接入 IL2CPP 卡面渲染方法，为所选卡使用游戏原生镜碎材质。效果仅在本机进程显示，账号实际持有的卡片品质由游戏服务器记录。
-- **桌面集成**：使用 macOS `SMAppService` 注册登录项，用系统热键接口注册 `Control + Option + M`。依赖的第三方许可随组件和 Python 依赖包保留。
-
-## 个人使用、风险与免责声明
-
-这是独立的个人学习和非商业使用项目，与 KONAMI、Valve、CodeWeavers 或 MDPro3 团队无关。游戏名称、卡图、动画等权利归各自权利人所有。请仅使用有权访问的本地素材，并自行确认使用方式符合游戏及平台条款。[KONAMI《大师决斗》使用条款](https://legal.konami.com/games/yugioh_masterduel/terms/tou/cs_other/en/)
-
-本工具会写入本地 Steam 配置与游戏资源，并可在游戏进程中加载本地 DLL。游戏或 CrossOver 更新可能造成失效、崩溃、文件损坏或需要重新下载，游戏运营方也可能限制账号使用。修改前请备份，使用风险由使用者自行承担。在适用法律允许的范围内，本项目按现状提供，不保证可用性、兼容性或账号安全，作者不对使用造成的损失承担责任。
-
-## 构建
-
-安装 Apple Command Line Tools。运行 `./build.sh` 构建 `.app`，运行 `./test.sh` 执行本地测试，运行 `./package.sh` 生成公开版 DMG。卡图处理使用开发工具提供的 `/usr/bin/python3`，构建时会下载 Python 依赖，并用 llvm-mingw 构建镜碎组件。
-
-需要生成个人闪刀快捷素材包时，在开发虚拟环境安装 `UnityPy==1.23.0`，运行 `python Scripts/generate_sky_striker.py <主账号的0000目录> <MDPro3目录> build/sky-striker`。将生成的文件夹复制为 `~/Library/Application Support/MD Switcher/SkyStriker` 即可在已安装的应用中使用。该素材包仅保存在本机。
+[查看实现方式、素材来源、完整免责声明与构建步骤](docs/implementation.md)

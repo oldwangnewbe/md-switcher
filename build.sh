@@ -11,6 +11,14 @@ app="$output/MD Switcher.app"
 
 mkdir -p "$staged/Contents/MacOS" "$output"
 cp "$project/Info.plist" "$staged/Contents/Info.plist"
+iconset="$work/AppIcon.iconset"
+mkdir -p "$iconset" "$staged/Contents/Resources"
+for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" "$project/assets/AppIcon.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    sips -z "$((size * 2))" "$((size * 2))" "$project/assets/AppIcon.png" \
+        --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil --convert icns --output "$staged/Contents/Resources/AppIcon.icns" "$iconset"
 pack="$project/build/sky-striker"
 if [[ "${MD_INCLUDE_PRIVATE_PACK:-1}" == 1 && -f "$pack/manifest.json" ]]; then
     resources="$staged/Contents/Resources/SkyStriker"
