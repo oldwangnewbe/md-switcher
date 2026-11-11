@@ -20,7 +20,7 @@ final class SwitcherAppDelegate: NSObject, NSApplicationDelegate {
         let id = EventHotKeyID(signature: 0x4D445357, id: 1) // MDSW
         let registered = RegisterEventHotKey(UInt32(kVK_ANSI_M), UInt32(controlKey | optionKey), id,
                                             GetApplicationEventTarget(), 0, &hotKey)
-        if registered != noErr { NSLog("MD Switcher hotkey unavailable (%d)", registered) }
+        if registered != noErr { NSLog("DuelShelf hotkey unavailable (%d)", registered) }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

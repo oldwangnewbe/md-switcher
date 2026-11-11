@@ -6,7 +6,7 @@ struct MDSwitcherApp: App {
     @NSApplicationDelegateAdaptor(SwitcherAppDelegate.self) private var delegate
 
     var body: some Scene {
-        Window("MD 换号器", id: "main") {
+        Window("决斗匣", id: "main") {
             SwitcherMainWindow(model: model, delegate: delegate)
         }
         .defaultSize(width: 950, height: 610)

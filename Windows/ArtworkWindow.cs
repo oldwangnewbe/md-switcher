@@ -1,12 +1,9 @@
-using System.Text;
-
 namespace MDSwitcher;
 
 internal sealed record ArtworkTarget(string Name, string Folder);
 
-internal sealed class ArtworkWindow : Form
+internal sealed partial class ArtworkPage : UserControl
 {
-    private sealed record SearchEntry(Card Card, string[] Names, string[] Series);
     private sealed record Collection(string Name, string Term)
     {
         public override string ToString() => Name;
@@ -17,128 +14,183 @@ internal sealed class ArtworkWindow : Form
     private readonly string source;
     private readonly ArtworkTarget? target;
     private readonly ArtworkTarget[] targets;
-    private SearchEntry[] entries = [];
+    private readonly bool sharedTarget;
+    private readonly CardThumbnails thumbnails;
+    private readonly System.Windows.Forms.Timer searchDelay = new() { Interval = 120 };
+    private string? previewPath;
+    private bool loadingPreview;
+    public bool Busy => busy;
+    public event Action? BusyChanged;
+    private CardSearchEntry[] entries = [];
     private Dictionary<string, GameResources.Entry> selectedIndex = [];
     private string? selectedCache;
     private bool busy;
 
-    private readonly TextBox search = new() { PlaceholderText = "搜索卡名、系列或卡片编号", Dock = DockStyle.Fill };
-    private readonly ComboBox collection = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 115 };
+    private readonly TextBox search = new() { PlaceholderText = "搜索卡名、系列或卡片编号", Dock = DockStyle.Top,
+        BorderStyle = BorderStyle.None };
+    private readonly ChoiceDropDown<Collection> collection = new("全部卡片", item => item.Name)
+        { AutoSize = true, DropDown = true, AccessibleName = "卡片系列" };
     private readonly CheckBox available = new() { Text = "仅有可替换异画", AutoSize = true, Margin = new(8, 6, 2, 2) };
-    private readonly ListBox results = new() { Dock = DockStyle.Fill, IntegralHeight = false, BorderStyle = BorderStyle.FixedSingle };
-    private readonly Label count = Ui.Label("正在读取本机卡库…", true);
-    private readonly Label title = Ui.Label("选择一张卡");
-    private readonly Label alternateName = Ui.Label("", true);
-    private readonly Label notice = Ui.Label("", true);
+    private readonly CardResultList results = new() { Dock = DockStyle.Fill };
+    private readonly Label count = Ui.Field("正在读取本机卡库…", 24);
+    private readonly Label title = Ui.Field("", 26);
+    private readonly Label notice = Ui.Field("", 23);
+    private readonly ToolTip tips = new();
     private readonly PictureBox preview = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Ui.Background };
-    private readonly ComboBox options = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, DisplayMember = nameof(Option.Label) };
-    private readonly CheckBox all = new() { Text = "应用到所有已绑定账号", AutoSize = true, Margin = new(3, 8, 3, 8) };
+    private readonly Label previewStatus = new() { Text = "暂无预览", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
+        BackColor = Ui.Background, ForeColor = Ui.Muted, Visible = false };
+    private readonly ChoiceDropDown<Option> options = new("选择卡图", item => item.Label)
+        { DropDown = true, Dock = DockStyle.Fill, AccessibleName = "卡图版本" };
+    private readonly CheckBox all = new() { Text = "所有账号", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly Button apply = Ui.Button("应用异画", primary: true);
     private readonly Button restore = Ui.Button("恢复原画");
     private readonly Button retry = Ui.Button("重试读取");
-    private sealed record Option(string Label, CardVariant Variant);
+    private sealed record Option(string Label, CardVariant? Variant);
 
-    public ArtworkWindow(Installation install, CardEngine engine, string source, ArtworkTarget? target, ArtworkTarget[] targets)
+    public ArtworkPage(Installation install, CardEngine engine, string source, ArtworkTarget? target, ArtworkTarget[] targets,
+                       string collectionsFile, bool sharedTarget = false)
     {
         this.install = install;
         this.engine = engine;
         this.source = source;
         this.target = target;
         this.targets = targets;
-        Ui.Style(this);
-        Text = "卡片搜索 · 异画";
-        ClientSize = new Size(890, 630);
-        MinimumSize = new Size(775, 590);
-        StartPosition = FormStartPosition.CenterParent;
+        this.collectionsFile = collectionsFile;
+        this.sharedTarget = sharedTarget;
+        thumbnails = new CardThumbnails(() => results.Invalidate());
+        Dock = DockStyle.Fill;
+        AutoScaleMode = AutoScaleMode.None;
 
-        var layout = Ui.Stack(SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize);
-        layout.Padding = new Padding(20);
-        var headline = Ui.Label("异画");
-        headline.Font = new Font(Font.FontFamily, 19, FontStyle.Bold);
-        headline.Margin = new Padding(3, 0, 3, 12);
-        layout.Controls.Add(headline, 0, 0);
-
-        var filters = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 3, Margin = new(0, 0, 0, 10) };
-        filters.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        filters.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        filters.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        filters.Controls.Add(search, 0, 0);
-        filters.Controls.Add(collection, 1, 0);
-        filters.Controls.Add(available, 2, 0);
-        layout.Controls.Add(filters, 0, 1);
+        var layout = new WorkspaceRows(this, 50, -1, 48);
+        var searchBox = new RoundedPanel { BackColor = Ui.Surface, Dock = DockStyle.Fill,
+            Margin = Padding.Empty, Corner = 9 };
+        searchBox.Controls.Add(search);
+        var filterInput = new Panel { Dock = DockStyle.Fill };
+        filterInput.Controls.Add(searchBox);
+        filterInput.Controls.Add(collectionPicker);
+        available.Text = "仅看异画";
+        available.Anchor = AnchorStyles.Left;
+        var filters = Ui.WorkspaceBar(0, filterInput, collection, available, newCollection);
+        layout.Controls.Add(filters, 0, 0);
 
         var columns = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 1, ColumnCount = 2, Margin = Padding.Empty };
         columns.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
         columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
-        var list = Ui.Stack(SizeType.AutoSize, SizeType.Percent);
-        count.Margin = new(3, 3, 3, 8);
+        var list = new WorkspaceRows(this, 0, -1);
+        count.ForeColor = Ui.Muted;
+        count.Margin = new(3, 0, 3, 0);
         list.Controls.Add(count, 0, 0);
+        count.TextChanged += (_, _) => list.SetHeight(0, count.Text.Length == 0 ? 0 : 26);
+        list.SetHeight(0, 26);
         list.Controls.Add(results, 0, 1);
-        columns.Controls.Add(list, 0, 0);
-        var detail = Ui.Stack(SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize);
-        detail.BackColor = Ui.Surface;
-        detail.Margin = new(14, 0, 0, 0);
-        detail.Padding = new Padding(16);
-        title.Font = new Font(Font.FontFamily, 14, FontStyle.Bold);
-        title.MaximumSize = new(370, 0);
-        alternateName.MaximumSize = new(370, 0);
-        preview.Margin = new(3, 8, 3, 8);
+        var listCard = new RoundedPanel { BackColor = Ui.Surface, Dock = DockStyle.Fill,
+            Padding = new(11), Margin = Padding.Empty };
+        listCard.Controls.Add(list);
+        columns.Controls.Add(listCard, 0, 0);
+        var detail = new WorkspaceRows(this, 30, -1, 38, 43);
+        title.Font = new Font(Font.FontFamily, 12, FontStyle.Bold);
         detail.Controls.Add(title, 0, 0);
-        detail.Controls.Add(alternateName, 0, 1);
-        detail.Controls.Add(preview, 0, 2);
-        detail.Controls.Add(options, 0, 3);
-        detail.Controls.Add(all, 0, 4);
-        detail.Controls.Add(Ui.Row(apply, restore), 0, 5);
-        columns.Controls.Add(detail, 1, 0);
-        layout.Controls.Add(columns, 0, 2);
-        notice.MaximumSize = new(690, 0);
-        notice.Margin = new(3, 10, 3, 4);
+        var previewArea = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Background };
+        previewArea.Controls.Add(preview);
+        previewArea.Controls.Add(previewStatus);
+        previewStatus.BringToFront();
+        detail.Controls.Add(previewArea, 0, 1);
+        detail.Controls.Add(options, 0, 2);
+        var choices = Ui.Row(addToCollection, saveChoice, removeChoice);
+        choices.AutoSize = false;
+        detail.Controls.Add(choices, 0, 3);
+        var detailCard = new RoundedPanel { BackColor = Ui.Surface, Dock = DockStyle.Fill,
+            Margin = Padding.Empty };
+        detailCard.Controls.Add(detail);
+        columns.Controls.Add(detailCard, 1, 0);
+        void FitCardDetails()
+        {
+            var hasCard = title.Text.Length > 0;
+            detailCard.Visible = hasCard;
+            columns.ColumnStyles[0].Width = hasCard ? 46 : 100;
+            columns.ColumnStyles[1].Width = hasCard ? 54 : 0;
+        }
+        title.TextChanged += (_, _) => FitCardDetails();
+        FitCardDetails();
+        layout.Controls.Add(columns, 0, 1);
+        notice.ForeColor = Ui.Muted;
         retry.Visible = false;
-        layout.Controls.Add(Ui.Row(notice, retry), 0, 3);
+        var actions = Ui.WorkspaceBar(0, notice, all, restore, apply, retry);
+        layout.Controls.Add(actions, 0, 2);
         Controls.Add(layout);
+        Ui.AtDeviceDpi(this, dpi =>
+        {
+            int Dip(int value) => Ui.Dip(value, dpi);
+            layout.Padding = new Padding(Dip(16), Dip(14), Dip(16), Dip(6));
+            filters.Margin = new Padding(0, 0, 0, Dip(9));
+            filterInput.Margin = new Padding(0, Dip(3), Dip(6), Dip(3));
+            searchBox.Padding = new Padding(Dip(10), Dip(7), Dip(10), 0);
+            listCard.Padding = detailCard.Padding = new Padding(Dip(9));
+            detailCard.Margin = new Padding(Dip(9), 0, 0, 0);
+            previewArea.Margin = new Padding(Dip(3), Dip(3), Dip(3), Dip(5));
+            actions.Padding = new Padding(0, Dip(5), 0, 0);
+        });
 
-        collection.Items.AddRange(new Collection[]
+        Collection[] filtersBySeries =
         {
             new("全部卡片", ""), new("闪刀姬", "闪刀"), new("烙印", "烙印"), new("黑魔导", "黑魔导")
-        });
-        collection.SelectedIndex = 0;
-        results.Format += (_, args) =>
-        {
-            if (args.ListItem is Card card)
-                args.Value = card.Replaceable ? $"{card.Name}   ·   {card.Variants.Length} 款" : card.Name;
         };
-        results.FormattingEnabled = true;
-        search.TextChanged += (_, _) => Filter();
+        collection.SetItems(filtersBySeries, filtersBySeries[0]);
+        notice.TextChanged += (_, _) => tips.SetToolTip(notice, notice.Text);
+        tips.SetToolTip(all, "同时处理所有已绑定的独立缓存。快速共享账号会随主号一起更新。");
+        results.PaintCard = DrawCard;
+        results.RequestThumbnails = cards => thumbnails.Request(cards.Select(engine.ThumbnailPath).OfType<string>(), ScalePixels(40));
+        searchDelay.Tick += (_, _) => Filter();
+        search.TextChanged += (_, _) =>
+        {
+            searchDelay.Stop();
+            searchDelay.Start();
+            UpdateButtons();
+        };
+        search.KeyDown += (_, args) =>
+        {
+            if (args.KeyCode == Keys.Escape && search.TextLength > 0)
+            {
+                search.Clear();
+                Filter();
+            }
+            else if (args.KeyCode is Keys.Enter or Keys.Down)
+            {
+                if (searchDelay.Enabled) Filter();
+                if (results.Items.Count > 0) results.Focus();
+            }
+            else return;
+            args.SuppressKeyPress = true;
+        };
         collection.SelectedIndexChanged += (_, _) => Filter();
         available.CheckedChanged += (_, _) => Filter();
         results.SelectedIndexChanged += (_, _) => ShowCard();
-        options.SelectedIndexChanged += (_, _) => ShowPreview();
+        options.SelectedIndexChanged += (_, _) =>
+        {
+            tips.SetToolTip(options, options.SelectedItem is Option { Variant: { } variant }
+                ? $"{options.Text} · MDPro3 编号 {variant.Id}" : options.Text);
+            ShowPreview();
+        };
         all.CheckedChanged += (_, _) => UpdateButtons();
         apply.Click += async (_, _) => await EditAsync(restoreOriginal: false);
         restore.Click += async (_, _) => await EditAsync(restoreOriginal: true);
         retry.Click += async (_, _) => await LoadAsync();
-        Shown += async (_, _) => await LoadAsync();
-        FormClosing += (_, args) => { if (busy) args.Cancel = true; };
-        FormClosed += (_, _) => { preview.Image?.Dispose(); };
+        Load += async (_, _) => await LoadAsync();
+        InitializeCollections();
         UpdateButtons();
     }
 
     private async Task LoadAsync()
     {
-        busy = true;
+        SetBusy(true);
         retry.Visible = false;
-        notice.Text = "首次会建立索引，之后会读取本机缓存。";
+        notice.Text = "";
         UpdateButtons();
         try
         {
-            entries = await Task.Run(() => engine.LoadCards(source).Select(card => new SearchEntry(card,
-                new[] { card.Id, card.MasterName ?? "", card.ProName ?? "" }
-                    .Concat(card.Codes.Select(code => code.ToString()))
-                    .Concat(card.MasterIDs.Select(id => id.ToString()))
-                    .Concat(card.Cid is int cid ? [cid.ToString()] : [])
-                    .Select(Normalize).Distinct().ToArray(),
-                card.Series.Select(Normalize).ToArray())).ToArray());
+            entries = await Task.Run(() => engine.LoadCards(source).Select(card => new CardSearchEntry(card)).ToArray());
+            byCid = entries.Where(entry => entry.Card.Cid.HasValue).ToDictionary(entry => entry.Card.Cid!.Value, entry => entry.Card);
             if (target is not null)
             {
                 try
@@ -153,8 +205,7 @@ internal sealed class ArtworkWindow : Form
                     selectedCache = null;
                 }
             }
-            notice.Text = target is null ? "所选账号尚未绑定资源，可在主界面的设置里绑定。"
-                : $"当前账号  {target.Name} · 应用前请退出游戏。";
+            ShowTargetNotice();
             Filter();
         }
         catch (Exception error)
@@ -163,63 +214,65 @@ internal sealed class ArtworkWindow : Form
             notice.Text = error.Message;
             retry.Visible = true;
         }
-        finally { busy = false; UpdateButtons(); }
+        finally { SetBusy(false); UpdateButtons(); }
     }
 
     private void Filter()
     {
+        searchDelay.Stop();
         if (entries.Length == 0) return;
-        var query = Normalize(search.Text);
-        var term = Normalize((collection.SelectedItem as Collection)?.Term ?? "");
-        var prior = (results.SelectedItem as Card)?.Id;
+        if (inCollections)
+        {
+            var cards = CurrentCollectionCards();
+            count.Text = cards.Length == 0 ? "在卡片搜索里加入异画" : "";
+            ShowResults(cards);
+            return;
+        }
+        var query = CardSearchEntry.Normalize(search.Text);
+        var term = CardSearchEntry.Normalize((collection.SelectedItem as Collection)?.Term ?? "");
+        if (query.Length == 0 && term.Length == 0 && !available.Checked)
+        {
+            count.Text = "输入卡名或编号";
+            ShowResults([]);
+            return;
+        }
         var matches = entries.Where(entry =>
             (!available.Checked || entry.Card.Replaceable) &&
             (term.Length == 0 || entry.Series.Any(series => series.Contains(term, StringComparison.Ordinal)) ||
                 entry.Names.Any(name => name.Contains(term, StringComparison.Ordinal))))
-            .Select(entry => (entry.Card, Rank(entry, query))).Where(pair => pair.Item2 >= 0)
+            .Select(entry => (entry.Card, entry.Rank(query))).Where(pair => pair.Item2 >= 0)
             .OrderBy(pair => pair.Item2).ThenByDescending(pair => pair.Card.Replaceable).ToArray();
-        results.BeginUpdate();
-        try
-        {
-            results.Items.Clear();
-            results.Items.AddRange(matches.Take(200).Select(pair => pair.Card).ToArray());
-            if (results.Items.Count > 0)
-                results.SelectedItem = results.Items.Cast<Card>().FirstOrDefault(card => card.Id == prior) ?? results.Items[0];
-        }
-        finally { results.EndUpdate(); }
-        count.Text = matches.Length > 200 ? $"找到 {matches.Length} 张 · 显示前 200 张" : $"找到 {matches.Length} 张";
+        count.Text = matches.Length > 200 ? "显示前 200 张，可缩小搜索范围" : matches.Length == 0 ? "没有匹配的卡片" : "";
+        ShowResults(matches.Take(200).Select(pair => pair.Card).ToArray());
+    }
+
+    private void ShowResults(Card[] cards)
+    {
+        results.SetItems(cards);
         ShowCard();
     }
 
-    private static int Rank(SearchEntry entry, string query)
+    private void ShowCard(int? preferredVariant = null)
     {
-        if (query.Length == 0 || entry.Names.Contains(query, StringComparer.Ordinal)) return 0;
-        if (entry.Series.Any(series => series.Contains(query, StringComparison.Ordinal))) return 1;
-        if (entry.Names.Any(name => name.StartsWith(query, StringComparison.Ordinal))) return 2;
-        return entry.Names.Any(name => name.Contains(query, StringComparison.Ordinal)) ? 3 : -1;
-    }
-
-    private static string Normalize(string input) =>
-        new(input.Normalize(NormalizationForm.FormKC).ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
-
-    private void ShowCard()
-    {
-        options.Items.Clear();
         var card = results.SelectedItem as Card;
-        title.Text = card?.Name ?? "选择一张卡";
-        var alias = card?.ProName is string name && name != card.MasterName && card.MasterName is not null
-            ? $"MDPro3  {name}\n" : "";
-        alternateName.Text = alias + (card is null ? "" : card.Replaceable ? $"{card.Variants.Length} 款可替换异画"
-            : card.Variants.Length == 0 ? "MDPro3 未找到异画" : "有异画，当前 Master Duel 资源里还找不到可替换的卡图");
+        title.Text = card?.Name ?? "";
         if (card is not null)
         {
             var applied = AppliedVariant(card);
-            options.Items.AddRange(card.Variants.Select((variant, index) => new Option(
-                $"异画 {index + 1}  ·  {variant.Id}{(variant.Id == applied ? "  ·  当前使用" : "")}", variant)).ToArray());
-            if (applied is not null) alternateName.Text += $"  ·  已应用 {applied}";
+            var saved = inCollections && card.Cid is int cid ? SelectedCollection?.Choices.GetValueOrDefault(cid) : null;
+            Option[] variants = [new Option("原卡图", null), .. card.Variants.Select((variant, index) => new Option(
+                $"{(variant.OverFrame is null ? "异画" : "超框异画")} {index + 1}" +
+                (!variant.CanApply ? "  ·  缺少超框登记" : variant.Id == applied ? "  ·  当前使用" : ""), variant))];
+            var selected = variants.FirstOrDefault(option => option.Variant?.Id == (preferredVariant ?? saved ?? applied));
+            if (preferredVariant is null && saved is not null && selected is not { Variant.CanApply: true })
+            {
+                selected = new Option("合集所选异画不可用", null);
+                variants = [selected, .. variants];
+            }
+            options.SetItems(variants, selected ?? variants[0]);
         }
-        if (options.Items.Count > 0) options.SelectedIndex = 0;
-        else ShowPreview();
+        else options.SetItems([]);
+        tips.SetToolTip(title, card?.ProName is string alias && alias != title.Text ? $"{title.Text}\nMDPro3 · {alias}" : title.Text);
         UpdateButtons();
     }
 
@@ -235,40 +288,90 @@ internal sealed class ArtworkWindow : Form
 
     private void ShowPreview()
     {
-        var previous = preview.Image;
-        preview.Image = null;
-        previous?.Dispose();
-        if (options.SelectedItem is not Option option) return;
+        var card = results.SelectedItem;
+        var variant = (options.SelectedItem as Option)?.Variant;
+        string? file = null;
         try
         {
-            using var stream = File.OpenRead(engine.ArtworkPath(option.Variant));
-            using var image = Image.FromStream(stream);
-            preview.Image = new Bitmap(image);
+            file = variant is not null ? engine.ArtworkPath(variant) : card is not null ? engine.OriginalPath(card) : null;
         }
-        catch (Exception error) when (error is IOException or ArgumentException or InvalidDataException)
+        catch (InvalidDataException) { }
+        if (!string.Equals(previewPath, file, StringComparison.OrdinalIgnoreCase))
         {
-            notice.Text = "无法读取异画预览。请检查 MDPro3 素材。";
+            previewPath = file;
+            var previous = preview.Image;
+            preview.Image = null;
+            previous?.Dispose();
+            previewStatus.Visible = file is null && card is not null;
+            if (file is not null && !loadingPreview) _ = LoadPreviewAsync();
         }
+        else if (file is null) previewStatus.Visible = card is not null;
         UpdateButtons();
+    }
+
+    private async Task LoadPreviewAsync()
+    {
+        loadingPreview = true;
+        try
+        {
+            while (!IsDisposed && previewPath is string requested)
+            {
+                var image = await Task.Run(() => CardThumbnails.Read(requested, 1400));
+                if (IsDisposed || requested != previewPath) { image?.Dispose(); continue; }
+                preview.Image = image;
+                previewStatus.Visible = image is null;
+                return;
+            }
+        }
+        finally { loadingPreview = false; }
     }
 
     private void UpdateButtons()
     {
+        var card = results.SelectedItem as Card;
+        var variant = (options.SelectedItem as Option)?.Variant;
+        var canChoose = !busy && !searchDelay.Enabled && card is { Replaceable: true } && variant is { CanApply: true };
         var hasTarget = all.Checked ? targets.Length > 0 : target is not null;
-        search.Enabled = collection.Enabled = available.Enabled = results.Enabled = options.Enabled = !busy;
+        search.Enabled = collection.Enabled = available.Enabled = results.Enabled = !busy;
+        options.Enabled = !busy && options.Items.Count > 0;
         all.Enabled = !busy && targets.Length > 0;
-        apply.Enabled = !busy && hasTarget && results.SelectedItem is Card { Replaceable: true } && options.SelectedItem is Option;
-        restore.Enabled = !busy && hasTarget && results.SelectedItem is Card { Path: not null };
+        newCollection.Enabled = !busy && entries.Length > 0 && collectionsError is null;
+        collectionPicker.Enabled = !busy;
+        addToCollection.Enabled = canChoose && collectionsError is null;
+        saveChoice.Enabled = canChoose && SelectedCollection is { } set && card?.Cid is int cid &&
+            set.Choices.GetValueOrDefault(cid) != variant?.Id;
+        removeChoice.Enabled = !busy && SelectedCollection is not null && card?.Cid is not null;
+        var canEdit = !busy && !searchDelay.Enabled && hasTarget;
+        if (inCollections)
+        {
+            var canRestore = CollectionEdits(restore: true) is { Length: > 0 };
+            restore.Enabled = canEdit && canRestore;
+            apply.Enabled = canEdit && canRestore && CollectionEdits(restore: false) is { Length: > 0 };
+        }
+        else
+        {
+            apply.Enabled = canEdit && canChoose;
+            restore.Enabled = canEdit && card?.Path is not null;
+        }
     }
 
     private async Task EditAsync(bool restoreOriginal)
     {
-        if (busy || results.SelectedItem is not Card { Path: not null } card) return;
-        var choice = restoreOriginal ? null : (options.SelectedItem as Option)?.Variant;
-        if (!restoreOriginal && choice is null) return;
+        if (busy || searchDelay.Enabled) return;
+        var previousVariant = (options.SelectedItem as Option)?.Variant?.Id;
+        ArtworkChoice[]? edits;
+        if (inCollections) edits = CollectionEdits(restoreOriginal);
+        else
+        {
+            if (results.SelectedItem is not Card { Path: not null } card) return;
+            var choice = restoreOriginal ? null : (options.SelectedItem as Option)?.Variant;
+            if (!restoreOriginal && choice is not { CanApply: true }) return;
+            edits = [new(card, choice)];
+        }
+        if (edits is not { Length: > 0 }) return;
         var selected = all.Checked ? targets : target is null ? [] : [target];
         if (selected.Length == 0) return;
-        busy = true;
+        SetBusy(true);
         UpdateButtons();
         notice.Text = restoreOriginal ? "正在核对并恢复原画…" : "正在校验并应用异画…";
         try
@@ -283,13 +386,7 @@ internal sealed class ArtworkWindow : Form
                     try
                     {
                         var cache = GameResources.Cache(install, account.Folder);
-                        var entry = GameResources.ReadIndex(cache).Items.FirstOrDefault(item => item.Name == card.Path)
-                            ?? throw new IOException("该账号还没下载这张卡的资源。");
-                        var original = ArtworkFiles.ReadOriginal(cache, entry);
-                        var patch = choice is null ? null : engine.MakePatch(card, choice, original);
-                        if (GameResources.ReadIndex(cache).Items.FirstOrDefault(item => item.Name == card.Path) != entry)
-                            throw new IOException("游戏索引刚刚更新，请重新打开卡片搜索。");
-                        ArtworkFiles.Apply(cache, entry, original, patch, choice?.Id, EnsureGameClosed);
+                        ArtworkFiles.ApplySelection(cache, edits, engine, EnsureGameClosed);
                         ok++;
                     }
                     catch (Exception error) when (error is IOException or InvalidOperationException or InvalidDataException
@@ -305,12 +402,43 @@ internal sealed class ArtworkWindow : Form
         catch (Exception error) { notice.Text = error.Message; }
         finally
         {
-            var variant = options.SelectedIndex;
-            busy = false;
-            ShowCard();
-            if (variant >= 0 && variant < options.Items.Count) options.SelectedIndex = variant;
-            UpdateButtons();
+            SetBusy(false);
+            ShowCard(restoreOriginal ? null : previousVariant);
         }
+    }
+
+    private void SetBusy(bool value)
+    {
+        busy = value;
+        BusyChanged?.Invoke();
+    }
+
+    private int ScalePixels(int value) => (value * DeviceDpi + 48) / 96;
+
+    private void DrawCard(Graphics graphics, Rectangle bounds, Card card, bool selected)
+    {
+        if (selected) Ui.RoundedFill(graphics, Rectangle.Inflate(bounds, -1, -1), ScalePixels(7), Ui.Highlight);
+        var size = ScalePixels(40);
+        var tile = new Rectangle(bounds.X + ScalePixels(8), bounds.Y + (bounds.Height - size) / 2, size, size);
+        if (engine.ThumbnailPath(card) is string file && thumbnails.Get(file) is { } thumbnail)
+            graphics.DrawImageUnscaled(thumbnail, tile.X + (tile.Width - thumbnail.Width) / 2, tile.Y + (tile.Height - thumbnail.Height) / 2);
+        else Ui.RoundedFill(graphics, tile, ScalePixels(4), Ui.Background);
+        var left = ScalePixels(56);
+        TextRenderer.DrawText(graphics, card.Name, Font, new Rectangle(bounds.X + left, bounds.Y,
+            Math.Max(0, bounds.Width - left - ScalePixels(4)), bounds.Height), Ui.Text,
+            TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            searchDelay.Dispose();
+            thumbnails.Dispose();
+            preview.Image?.Dispose();
+            tips.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     private static void EnsureGameClosed()

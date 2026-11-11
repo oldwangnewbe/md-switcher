@@ -1,37 +1,52 @@
-<p align="center"><img src="assets/AppIcon.png" width="104" alt="MD 换号器图标"></p>
+<p align="center"><img src="assets/AppIcon.png" width="88" alt="决斗匣图标"></p>
 
-# MD 换号器
+# 决斗匣 · DuelShelf
 
-在 Apple Silicon Mac 上切换 CrossOver 里的 Steam 账号，启动《游戏王 Master Duel》，并按账号设置本地异画和动态镜碎。
+《游戏王 Master Duel》桌面工具。切换本机 Steam 账号、复用已下载的游戏资源，并按账号设置异画和动态镜碎。
 
-**[下载 macOS 安装包](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.13/MD-Switcher-0.9.13-arm64.dmg)** · [查看发行版](https://github.com/oldwangnewbe/md-switcher/releases/latest)
+| 平台 | 安装包 | 需要准备 |
+| --- | --- | --- |
+| Windows 10 / 11 x64 | [下载 ZIP](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.14/DuelShelf-Windows-x64-0.9.14.zip) | 安装 Steam 和《Master Duel》 |
+| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.14/DuelShelf-macOS-arm64-0.9.14.dmg) | 在同一个 CrossOver 容器里安装 Steam 和《Master Duel》 |
 
-![MD 换号器账号切换页，示例账号列表与启动按钮](docs/images/accounts.png)
+## Windows 怎么用
 
-## 安装与换号
+1. 解压整个 ZIP，运行 `DuelShelf.exe`。将 `CardEngine` 和 `RoyalFinish` 留在程序旁边。
+2. 在 Steam 登录需要切换的账号并选择记住登录。打开决斗匣的「账号切换」，点「刷新」。列表来自本机 Steam 保存的账号记录。
+3. 退出游戏，在决斗匣选中账号，点「启动 MD」。只想登录 Steam 时，点「仅切换 Steam」。Steam Guard 验证在 Steam 里完成。
 
-需要 **Apple Silicon、macOS 13+、CrossOver**，以及装在 CrossOver 容器里的 Steam 和《Master Duel》。安装包已做临时签名，尚未通过 Apple 公证，macOS 首次打开时可能拦截。
+要复用资源，在「账号切换」选中已下载完整资源的账号，点「设为资源主账号」。小号首次进入游戏后退出，再选中它并点「绑定游戏目录」。在同一 NTFS 卷上可点「快速共享主号缓存」。共享中的小号会同步主号的异画，需要单独换异画时先点「恢复原缓存」。 [Windows 详细说明](Windows/README.md)
 
-1. 打开下载的 DMG，把 **MD Switcher.app** 拖到「应用程序」，再从那里打开。
-2. 在 CrossOver 的 Steam 里登录要切换的账号，勾选「记住登录」。返回换号器点「刷新」。
-3. 先退出游戏，再选账号并点「启动 MD」。只想登录 Steam 时，点「仅切换 Steam」。遇到 Steam Guard 验证时，在 Steam 里完成。
+<details>
+<summary>查看 Windows 账号切换界面</summary>
 
-找不到游戏时，在左侧「设置 → 安装目录」手动选择。需要自启动时，在「设置 → 登录与快捷键」点「开启自启动」。换号器在后台运行时，按 **Control + Option + M** 叫回主界面。
+![Windows 账号切换页，显示示例账号、资源绑定和启动按钮](docs/images/windows-accounts.png)
 
-![设置页示例，包含安装目录、登录自启动和全局快捷键](docs/images/settings.png)
+</details>
 
-## 其他功能
+## macOS 怎么用
 
-| 想做什么 | 从哪里开始 |
-| --- | --- |
-| 复用已下载的资源 | 选一个下载完成的账号，在「游戏资源」设为资源主账号。之后用换号器启动其他账号。 |
-| 换异画或召唤动画 | 在「设置」选好本机 MDPro3，再到「卡片搜索」选异画并应用，或到「异画合集」批量应用。召唤动画支持替换已有演出。 |
-| 开启动态镜碎 | 在「动态镜碎」选卡并为账号开启。保持换号器在后台，从换号器或 Steam 启动游戏都会加载。效果仅在本机显示。 |
+1. 打开 DMG，把 `DuelShelf.app` 拖到「应用程序」。安装包使用临时签名，首次打开时 macOS 可能拦截。升级时先退出旧版，将旧应用移出「应用程序」，再拖入新版。原有设置会继续使用。
+2. 在 CrossOver 容器里的 Steam 登录并记住账号。在决斗匣的「账号切换」点「刷新」。找不到游戏时，去「设置 → 安装目录」选择游戏文件夹。
+3. 退出游戏，选中账号并点「启动 MD」或「仅切换 Steam」。需要开机运行时，去「设置 → 登录与快捷键」开启自启动。按 **Control + Option + M** 可叫回窗口。
 
-## 使用前须知
+要复用资源，在「账号切换」的「游戏资源」菜单设置资源主账号。小号首次使用时可选「启动并识别新号目录」，完成识别后再用决斗匣启动。
 
-- **账号风险**：异画和动画会修改本地游戏资源，动态镜碎会向游戏进程加载 DLL。请自行确认使用方式符合游戏和平台条款，运营方可能限制账号。[KONAMI 使用条款](https://legal.konami.com/games/yugioh_masterduel/terms/tou/cs_other/en/)
-- **文件和兼容性风险**：先备份。游戏或 CrossOver 更新后，功能可能失效、引发崩溃或导致资源重新下载。出现问题时，可退出游戏后恢复原画、演出或备份资源。
-- **个人使用**：本项目独立开发，仅供个人学习和非商业使用，按现状提供。安装包不附带游戏素材，异画和动画从用户本机的 MDPro3 读取。
+<details>
+<summary>查看 macOS 账号切换和设置界面</summary>
 
-[查看实现方式、素材来源、完整免责声明与构建步骤](docs/implementation.md)
+![macOS 账号切换页，显示示例账号、游戏资源菜单和启动按钮](docs/images/accounts.png)
+
+[安装目录与快捷键设置截图](docs/images/settings.png)
+
+</details>
+
+## 异画、镜碎和召唤动画
+
+- **异画**：在「设置」连接本机 MDPro3。退出游戏后，从「卡片搜索」预览并应用普通或超框异画，或用「异画合集」批量应用、恢复原画。
+- **动态镜碎**：选中账号，在「动态镜碎」按卡片或合集开启。保持决斗匣运行，下次从决斗匣或 Steam 启动游戏时会自动加载。效果仅在本机显示。
+- **召唤动画（仅 macOS）**：在「召唤动画」选择异画的演出，可替换游戏已有的对应演出，也可恢复原演出。
+
+> 异画和动画会修改本地资源，动态镜碎会向游戏进程加载 DLL。请先备份并核对游戏与平台条款。游戏更新可能导致功能失效，运营方也可能限制账号使用。项目供个人学习和非商业使用，安装包不附带游戏素材。
+
+[使用风险、素材来源与构建方式](docs/implementation.md) · [所有发行版](https://github.com/oldwangnewbe/md-switcher/releases)

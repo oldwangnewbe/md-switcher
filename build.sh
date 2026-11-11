@@ -2,14 +2,16 @@
 set -euo pipefail
 
 project="$(cd "$(dirname "$0")" && pwd)"
+name="$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$project/Info.plist")"
+executable="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$project/Info.plist")"
 output="${1:-$project/build}"
 work="$(mktemp -d "${TMPDIR:-/tmp}/md-switcher-build.XXXXXX")"
 incoming=""
 trap 'rm -rf "$work"; if [[ -n "$incoming" ]]; then rm -rf "$incoming"; fi' EXIT
-staged="$work/MD Switcher.app"
-app="$output/MD Switcher.app"
+staged="$work/$name.app"
+app="$output/$name.app"
 
-mkdir -p "$staged/Contents/MacOS" "$output"
+mkdir -p "$staged/Contents/MacOS" "$output" "$project/build"
 cp "$project/Info.plist" "$staged/Contents/Info.plist"
 iconset="$work/AppIcon.iconset"
 mkdir -p "$iconset" "$staged/Contents/Resources"
@@ -43,14 +45,14 @@ cp "$project"/Scripts/{card_search,generate_sky_striker,summon_animation,over_fr
 "$project/RoyalFinish/build.sh" "$staged/Contents/Resources/RoyalFinish"
 xcrun swiftc -swift-version 5 -target arm64-apple-macos13.0 \
     -module-cache-path "$work/cache" -O "$project"/Sources/*.swift \
-    -o "$staged/Contents/MacOS/MD Switcher"
+    -o "$staged/Contents/MacOS/$executable"
 codesign --force --sign - "$staged"
 # Sign on the system volume, then copy without AppleDouble metadata on external drives.
 incoming="$(mktemp -d "$output/.md-switcher-install.XXXXXX")"
-ditto --norsrc --noextattr --noacl "$staged" "$incoming/MD Switcher.app"
-codesign --verify --strict "$incoming/MD Switcher.app"
+ditto --norsrc --noextattr --noacl "$staged" "$incoming/$name.app"
+codesign --verify --strict "$incoming/$name.app"
 if [[ -e "$app" ]]; then mv "$app" "$incoming/previous.app"; fi
-if ! mv "$incoming/MD Switcher.app" "$app"; then
+if ! mv "$incoming/$name.app" "$app"; then
     if [[ -e "$incoming/previous.app" ]] && ! mv "$incoming/previous.app" "$app"; then
         printf 'Previous build retained at %s\n' "$incoming/previous.app" >&2
         incoming=""

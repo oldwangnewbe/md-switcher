@@ -107,12 +107,23 @@ internal sealed partial class SteamSession(Installation install, string state)
         }
 
         RequireGameClosed();
+        if (resources is not null)
+        {
+            var folder = resources.MainAccount == account.Id ? resources.MainFolder : resources.Accounts.GetValueOrDefault(account.Id);
+            if (folder is not null)
+            {
+                var cache = GameResources.CacheLocation(install, folder);
+                var main = GameResources.CacheLocation(install, resources.MainFolder);
+                if (account.Id == resources.MainAccount || SharedCache.IsLinkedTo(cache, main)) cache = main;
+                ArtworkFiles.RecoverPending(cache, RequireGameClosed);
+            }
+        }
         if (resources is not null && resources.MainAccount != account.Id && resources.Accounts.ContainsKey(account.Id))
         {
-            progress.Report("正在复用主账号资源。首次复制可能需要几分钟。");
-            var copied = await Task.Run(() => GameResources.Prepare(install, resources, account.Id,
-                () => ActiveAccount() == account.Id));
-            if (copied > 0) progress.Report($"已复用 {copied} 个资源文件，正在启动游戏…");
+            progress.Report("正在检查主账号资源和磁盘共享支持…");
+            var added = await Task.Run(() => GameResources.Prepare(install, resources, account.Id,
+                () => ActiveAccount() == account.Id, progress));
+            if (added > 0) progress.Report($"已为小号准备 {added} 个资源文件，正在启动游戏…");
         }
         if (Installation.Find(install.Steam, install.Game, strict: true) is null)
             throw new InvalidOperationException("Master Duel 的 Steam 安装位置已变化，请刷新安装目录。");
@@ -172,7 +183,7 @@ internal sealed partial class SteamSession(Installation install, string state)
         return updated.ToString();
     }
 
-    private ulong? ActiveAccount()
+    internal ulong? ActiveAccount()
     {
         using var key = Registry.CurrentUser.OpenSubKey(SteamKey + @"\ActiveProcess");
         if (key?.GetValue("pid") is not int pid || pid <= 0 ||

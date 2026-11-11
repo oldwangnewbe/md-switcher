@@ -20,6 +20,8 @@ internal static partial class GameResources
 
     internal sealed record Catalog([property: JsonPropertyName("informations")] Entry[] Items);
 
+    internal static bool IsAccountFolder(string name) => AccountFolder().IsMatch(name);
+
     public static string Root(Installation install) => Path.Combine(install.Game, "LocalData");
 
     public static string Identify(Installation install, string folder)
@@ -33,7 +35,8 @@ internal static partial class GameResources
         return name;
     }
 
-    public static int Prepare(Installation install, ResourceSettings settings, ulong account, Func<bool> sessionStillValid)
+    public static int Prepare(Installation install, ResourceSettings settings, ulong account, Func<bool> sessionStillValid,
+                              IProgress<string>? progress = null)
     {
         if (settings.MainAccount == account || !settings.Accounts.TryGetValue(account, out var targetFolder)) return 0;
         if (targetFolder.Equals(settings.MainFolder, StringComparison.OrdinalIgnoreCase) ||
@@ -41,49 +44,74 @@ internal static partial class GameResources
             throw new InvalidDataException("大号和小号必须各自使用独立的账号资源目录。");
 
         var source = Cache(install, settings.MainFolder);
+        ArtworkFiles.RecoverPending(source, EnsureIdle);
+        var targetLocation = CacheLocation(install, targetFolder);
+        if (SharedCache.IsLinkedTo(targetLocation, source))
+        {
+            if (!File.Exists(AssetPath(source, Index))) throw new IOException("大号缓存缺少资源索引。");
+            return 0;
+        }
         var target = Cache(install, targetFolder);
         var from = ReadIndex(source);
         var to = ReadIndex(target);
         var originals = from.Items.ToDictionary(entry => entry.Name, StringComparer.OrdinalIgnoreCase);
         if (from.Items.Length == 0)
             throw new InvalidDataException("主账号尚无可复用的游戏资源。");
-        if (to.Items.Length >= from.Items.Length) return 0;
+        if (to.Items.Length > from.Items.Length) return 0;
         if (to.Items.Any(item => !originals.TryGetValue(item.Name, out var match) || match != item))
+        {
+            if (to.Items.Length == from.Items.Length) return 0;
             throw new InvalidDataException("主账号与小号的资源版本不匹配，请检查游戏更新和语言。");
+        }
+
+        var missing = from.Items.Any(item => !File.Exists(AssetPath(target, item.Name)));
+        if (!missing && to.Items.Length == from.Items.Length) return 0;
 
         EnsureIdle();
+        var sourceVolume = ResourceVolume.Read(source);
+        var destinationVolume = ResourceVolume.Read(target);
+        var canClone = sourceVolume.CanCloneTo(destinationVolume);
+        var useHardLinks = !canClone && sourceVolume.CanHardLinkTo(destinationVolume);
+        if (!canClone && !useHardLinks && missing)
+            throw new IOException("主号和小号的资源须位于同一个 NTFS 或支持块克隆的 ReFS 卷。可用「仅切换 Steam」先登录账号。");
+        if (missing)
+            progress?.Report(useHardLinks ? "正在核对原版资源并建立 NTFS 硬链接…" : "正在核对原版资源并共享 ReFS 数据块…");
         var poll = Stopwatch.StartNew();
-        var copied = 0;
+        var buffer = new byte[256 * 1024];
+        var added = 0;
+        var processed = 0;
+        long bytesShared = 0;
+        long bytesWritten = 0;
         foreach (var item in from.Items)
         {
-            if (poll.ElapsedMilliseconds >= 1000)
-            {
-                EnsureIdle();
-                poll.Restart();
-            }
+            ReportProgress();
             var destination = AssetPath(target, item.Name);
             if (File.Exists(destination))
             {
                 if (!Matches(destination, item) && ArtworkFiles.OriginalWhenModified(target, item) is null)
                     throw new IOException($"小号的资源 {item.Name} 已存在但内容不同。");
+                processed++;
                 continue;
             }
 
+            if (!canClone && !useHardLinks) throw new IOException("小号资源刚刚发生变化，请重新核对。");
             var input = ArtworkFiles.OriginalWhenModified(source, item) ?? AssetPath(source, item.Name);
             if (!File.Exists(input)) throw new IOException($"主账号的资源 {item.Name} 尚未下载。");
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             var stage = Path.Combine(Path.GetDirectoryName(destination)!, $".md-{Guid.NewGuid():N}.tmp");
             try
             {
-                File.Copy(input, stage);
-                if (!Matches(stage, item)) throw new IOException($"主账号的资源 {item.Name} 与游戏索引不匹配。");
+                ShareVerified(input, stage, item);
+                ReportProgress();
                 File.Move(stage, destination);
-                copied++;
+                added++;
+                processed++;
             }
             finally { File.Delete(stage); }
         }
 
         EnsureIdle();
+        progress?.Report("资源文件已核对，正在更新小号资源索引…");
         var index = AssetPath(target, Index);
         var backup = Path.Combine(Path.GetDirectoryName(target)!, ".md-switcher-original-index");
         if (!File.Exists(backup)) File.Copy(index, backup);
@@ -93,7 +121,53 @@ internal static partial class GameResources
         var updated = File.ReadAllText(AssetPath(source, Index));
         EnsureIdle();
         SteamSession.AtomicWrite(index, updated);
-        return copied;
+        return added;
+
+        void ReportProgress()
+        {
+            if (poll.ElapsedMilliseconds < 1000) return;
+            EnsureIdle();
+            progress?.Report($"已核对 {processed:N0} / {from.Items.Length:N0} 个文件，共享 {bytesShared / 1048576d:N1} MB，实际写入 {bytesWritten / 1048576d:N1} MB。");
+            poll.Restart();
+        }
+
+        void ShareVerified(string input, string stage, Entry item)
+        {
+            using var reader = new FileStream(input, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 1, FileOptions.SequentialScan);
+            if (reader.Length != item.Bytes) throw SourceMismatch(item);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            long validated = 0;
+            int count;
+            while ((count = reader.Read(buffer)) != 0)
+            {
+                validated += count;
+                if (validated > item.Bytes) throw SourceMismatch(item);
+                hash.AppendData(buffer, 0, count);
+                ReportProgress();
+            }
+            if (validated != item.Bytes || !Convert.ToHexString(hash.GetHashAndReset()).Equals(item.Hash, StringComparison.OrdinalIgnoreCase))
+                throw SourceMismatch(item);
+
+            if (useHardLinks)
+            {
+                ResourceVolume.HardLink(input, stage);
+                bytesShared += item.Bytes;
+                return;
+            }
+
+            using var writer = new FileStream(stage, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1);
+            var shared = sourceVolume.CloneAlignedBlocks(reader, writer, item.Bytes, ReportProgress);
+            bytesShared += shared;
+            // Only a partial cluster at the end needs a physical copy.
+            reader.Position = writer.Position = shared;
+            while ((count = reader.Read(buffer)) != 0)
+            {
+                writer.Write(buffer, 0, count);
+                bytesWritten += count;
+            }
+            if (writer.Length != item.Bytes) throw SourceMismatch(item);
+        }
 
         void EnsureIdle()
         {
@@ -102,16 +176,29 @@ internal static partial class GameResources
         }
     }
 
+    private static IOException SourceMismatch(Entry item) => new($"主账号的资源 {item.Name} 与游戏索引不匹配。");
+
     internal static string Cache(Installation install, string name)
+    {
+        var cache = CacheLocation(install, name);
+        RequireDirectory(cache);
+        return cache;
+    }
+
+    internal static string CacheLocation(Installation install, string name)
     {
         if (!AccountFolder().IsMatch(name)) throw new InvalidDataException("账号资源文件夹格式异常。");
         var root = Root(install);
         var account = Path.Combine(root, name);
-        var cache = Path.Combine(account, "0000");
-        foreach (var path in new[] { root, account, cache })
-            if (!Directory.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("账号资源目录缺失或指向链接。请先在游戏内完成首次初始化。");
-        return cache;
+        RequireDirectory(root);
+        RequireDirectory(account);
+        return Path.Combine(account, "0000");
+    }
+
+    private static void RequireDirectory(string path)
+    {
+        if (!Directory.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("账号资源目录缺失或指向链接。请先在游戏内完成首次初始化，或在账号详情中恢复原缓存。");
     }
 
     internal static Catalog ReadIndex(string cache)

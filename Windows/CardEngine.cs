@@ -6,21 +6,28 @@ using System.Text.RegularExpressions;
 
 namespace MDSwitcher;
 
-internal sealed record CardVariant(int Id, string File);
+internal sealed record OverFrameSource(string File, string? Gate);
+internal sealed record CardVariant(int Id, string File, OverFrameSource? OverFrame = null)
+{
+    public bool CanApply => OverFrame is null || OverFrame.Gate is not null;
+}
 internal sealed record Card(string Id, int? Cid, string? MasterName, string? ProName, int[] Codes,
-                            int[] MasterIDs, CardVariant[] Variants, string? Path, string[] Series)
+                            int[] MasterIDs, CardVariant[] Variants, string? Path, string[] Series,
+                            string? PreviewFile = null, string? OriginalPreviewPath = null)
 {
     public string Name => MasterName ?? ProName ?? Id;
-    public bool Replaceable => Cid.HasValue && Path is not null && Variants.Length > 0;
+    public bool Replaceable => Cid.HasValue && Path is not null && Variants.Any(variant => variant.CanApply);
 }
 
 internal sealed partial class CardEngine(string state, string pro)
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
-    private const string CacheVersion = "win-card-1";
+    private const string CacheVersion = "win-card-3";
     private static readonly string EnginePath = Path.Combine(AppContext.BaseDirectory, "CardEngine");
     private sealed record SavedIndex(string Fingerprint, Card[] Cards);
-    private sealed record GeneratedPatch(string Path, string OriginalSHA256, ArtworkInput SourceArtwork, PatchedVariant[] Variants);
+    private sealed record GeneratedPatch(string Path, string OriginalSHA256, ArtworkInput SourceArtwork,
+                                         PatchedVariant[] Variants, OverFrameRegistration? OverFrame);
+    private sealed record OverFrameRegistration(int CardID, string Gate);
     private sealed record ArtworkInput(int Format, int Cid, string Sha256);
     private sealed record PatchedVariant(int Id, string Sha256);
 
@@ -41,7 +48,7 @@ internal sealed partial class CardEngine(string state, string pro)
         return InWorkspace(work =>
         {
             var output = Path.Combine(work, "cards.json");
-            Run(work, "index", cache, pro, output);
+            Run(work, "index", cache, pro, output, "--over-frame");
             var cards = JsonSerializer.Deserialize<Card[]>(File.ReadAllText(output), Json)
                 ?? throw new InvalidDataException("无法读取卡片索引。");
             if (cards.Length == 0 || Fingerprint(cache) != fingerprint)
@@ -53,20 +60,33 @@ internal sealed partial class CardEngine(string state, string pro)
 
     public string ArtworkPath(CardVariant variant)
     {
-        if (!ArtworkFilename().IsMatch(variant.File) ||
-            !int.TryParse(Path.GetFileNameWithoutExtension(variant.File), out var id) || id != variant.Id)
+        var name = variant.OverFrame?.File ?? variant.File;
+        if (!ArtworkFilename().IsMatch(name) ||
+            !int.TryParse(Path.GetFileNameWithoutExtension(name), out var id) || id != variant.Id)
             throw new InvalidDataException("异画文件名无效。");
-        return Path.Combine(pro, "Picture", "Art", variant.File);
+        return Path.Combine(pro, "Picture", variant.OverFrame is null ? "Art" : "OverFrame", name);
     }
+
+    public string? OriginalPath(Card card)
+    {
+        var parts = card.OriginalPreviewPath?.Split('/');
+        return parts is ["Art" or "OverFrame", var name] && ArtworkFilename().IsMatch(name)
+            ? Path.Combine(pro, "Picture", parts[0], name) : null;
+    }
+
+    public string? ThumbnailPath(Card card) => card.PreviewFile is string name && ArtworkFilename().IsMatch(name)
+        ? Path.Combine(pro, "Picture", "Art", name) : null;
 
     public byte[] MakePatch(Card card, CardVariant variant, byte[] original)
     {
-        if (card.Cid is not int cid || card.Path is null || !card.Variants.Contains(variant))
+        if (card.Cid is not int cid || card.Path is null || !variant.CanApply || !card.Variants.Contains(variant))
             throw new InvalidDataException("该异画没有匹配的 Master Duel 卡图。");
-        var image = File.ReadAllBytes(ArtworkPath(variant));
+        var artworkPath = ArtworkPath(variant);
+        var image = File.ReadAllBytes(artworkPath);
+        var overFrame = variant.OverFrame?.Gate is string gate ? new OverFrameRegistration(cid, gate) : null;
         var originalHash = ArtworkFiles.Hash(original);
         var sourceHash = ArtworkFiles.Hash(image);
-        var key = $"{CacheVersion}-{cid}-{variant.Id}-{originalHash}-{sourceHash}";
+        var key = $"{CacheVersion}-{cid}-{variant.Id}-{(overFrame is null ? "art" : "overframe")}-{originalHash}-{sourceHash}";
         var destination = Path.Combine(state, "card-art-library", key);
         if (Directory.Exists(destination))
         {
@@ -76,12 +96,14 @@ internal sealed partial class CardEngine(string state, string pro)
         return InWorkspace(work =>
         {
             var input = Path.Combine(work, "original");
-            var art = Path.Combine(work, variant.File);
+            var art = Path.Combine(work, Path.GetFileName(artworkPath));
             var output = Path.Combine(work, "pack");
             File.WriteAllBytes(input, original);
             File.WriteAllBytes(art, image);
             Directory.CreateDirectory(output);
-            Run(work, "patch", input, art, cid.ToString(), card.Path, variant.Id.ToString(), card.Name, output);
+            string[] args = ["patch", input, art, cid.ToString(), card.Path, variant.Id.ToString(), card.Name, output];
+            if (overFrame is not null) args = [.. args, "--over-frame-gate", overFrame.Gate];
+            Run(work, args);
             var patch = Check(output);
             Directory.CreateDirectory(destination);
             SteamSession.AtomicWrite(Path.Combine(destination, $"{variant.Id}.bundle"), patch);
@@ -94,7 +116,8 @@ internal sealed partial class CardEngine(string state, string pro)
             var manifest = JsonSerializer.Deserialize<GeneratedPatch[]>(File.ReadAllText(Path.Combine(directory, "manifest.json")), Json);
             if (manifest is not [{ } item] || item.Path != card.Path ||
                 !originalHash.Equals(item.OriginalSHA256, StringComparison.OrdinalIgnoreCase) ||
-                item.SourceArtwork is not { Format: 1 } source || source.Cid != cid ||
+                item.SourceArtwork is not { } source || source.Format != (overFrame is null ? 1 : 2) ||
+                source.Cid != cid || item.OverFrame != overFrame ||
                 !sourceHash.Equals(source.Sha256, StringComparison.OrdinalIgnoreCase) ||
                 item.Variants is not [{ } selected] || selected.Id != variant.Id)
                 throw new InvalidDataException("异画缓存与当前卡图不匹配。");
@@ -105,6 +128,18 @@ internal sealed partial class CardEngine(string state, string pro)
             return bundle;
         }
     }
+
+    public byte[] RewriteOverFrameGate(byte[] original, IEnumerable<int> cardIds) => InWorkspace(work =>
+    {
+        var input = Path.Combine(work, "original");
+        var output = Path.Combine(work, "registration");
+        File.WriteAllBytes(input, original);
+        Run(work, ["over-frame-gate", input, output, .. cardIds.Distinct().Order().Select(id => id.ToString())]);
+        var result = File.ReadAllBytes(output);
+        if (!result.AsSpan().StartsWith("UnityFS\0"u8))
+            throw new InvalidDataException("超框登记资源格式异常。");
+        return result;
+    });
 
     private string Fingerprint(string cache)
     {
@@ -120,11 +155,17 @@ internal sealed partial class CardEngine(string state, string pro)
             using var stream = File.OpenRead(file);
             hash.AppendData(SHA256.HashData(stream));
         }
-        foreach (var file in Directory.EnumerateFiles(Path.Combine(pro, "Picture", "Art")).Order(StringComparer.Ordinal))
+        foreach (var name in new[] { "Art", "OverFrame" })
         {
-            if (!ArtworkFilename().IsMatch(Path.GetFileName(file))) continue;
-            var info = new FileInfo(file);
-            Add($"{info.Name}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
+            var folder = Path.Combine(pro, "Picture", name);
+            Add(name);
+            if (!Directory.Exists(folder)) continue;
+            foreach (var file in Directory.EnumerateFiles(folder).Order(StringComparer.Ordinal))
+            {
+                if (!ArtworkFilename().IsMatch(Path.GetFileName(file))) continue;
+                var info = new FileInfo(file);
+                Add($"{info.Name}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
+            }
         }
         foreach (var folder in Directory.EnumerateDirectories(cache).Order(StringComparer.Ordinal))
         {
