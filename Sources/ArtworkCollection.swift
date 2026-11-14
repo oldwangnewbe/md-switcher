@@ -5,6 +5,9 @@ struct ArtworkCollection: Codable, Identifiable, Equatable {
     let name: String
     var choices: [Int: Int]
 
+    // A zero value is membership without an artwork override.
+    static let cardOnly = 0
+
     static let presets: [ArtworkCollection] = [
         .init(id: "sky-striker", name: "闪刀姬", choices: [
             13670: 26077389, 14829: 37351134, 13668: 63288574, 13669: 90673289,
@@ -46,6 +49,7 @@ struct ArtworkCollection: Codable, Identifiable, Equatable {
         let card: SearchCard?
         let variantID: Int
 
+        var hasArtworkChoice: Bool { variantID != ArtworkCollection.cardOnly }
         var variant: SearchCard.Variant? { card?.variants.first { $0.id == variantID } }
     }
 }

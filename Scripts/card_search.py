@@ -173,7 +173,7 @@ def card_series(row, set_labels):
     return sorted(result)
 
 
-def search_index(cache, mdpro3, output, include_over_frame=False):
+def search_index(cache, mdpro3, output, include_over_frame=False, performance_metadata=None):
     manifest = json.loads((cache / "86/868ffd0e").read_bytes())
     index = {item["assetName"]: item for item in manifest["informations"]
              if re.fullmatch(r"[0-9a-f]{2}/[0-9a-f]{8}", item["assetName"])}
@@ -213,12 +213,15 @@ def search_index(cache, mdpro3, output, include_over_frame=False):
         original = mappings.get(cid)
         if original not in codes:
             original = root
-        variants = artwork_variants(codes, original, images, over_frames, gate)
+        official_prints = {mappings[variant] for variant in master_ids[cid]
+                           if mappings.get(variant) and mappings[variant] != original}
+        variants = artwork_variants(set(codes) | official_prints, original, images, over_frames, gate)
         path = next((relative for region in ("tcg", "common", "ocg")
                      if (relative := bundle_path(f"Card/Images/Illust/{region}/{cid}")) in index
                      and (cache / relative).is_file()), None)
         records.append({"id": f"md-{cid}", "cid": cid, "masterName": name, "proName": rows[root][1] if root else None,
                         "codes": sorted(codes), "masterIDs": sorted(master_ids[cid]), "variants": variants, "path": path,
+                        "originalArtworkID": original,
                         "series": card_series(rows[root], set_labels) if root else [],
                         "previewFile": artwork_preview(codes, original, root, images),
                         "originalPreviewPath": original_preview_path(original, images, over_frames)})
@@ -229,6 +232,15 @@ def search_index(cache, mdpro3, output, include_over_frame=False):
                             "series": card_series(rows[root], set_labels),
                             "previewFile": artwork_preview(codes, root, root, images),
                             "originalPreviewPath": original_preview_path(root, images, over_frames)})
+    from summon_animation import CATALOG, TRIGGERS, performance_index
+    catalog_path, trigger_path = performance_metadata or (cache / CATALOG, cache / TRIGGERS)
+    if catalog_path.is_file() and trigger_path.is_file():
+        matches = performance_index(cache, mdpro3, index, names, same, mappings,
+                                    {card["cid"]: card for card in records if "cid" in card},
+                                    catalog_path, trigger_path)
+        for card in records:
+            if card.get("cid") in matches:
+                card["performances"] = matches[card["cid"]]
     output.write_text(json.dumps(records, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
 
@@ -294,6 +306,7 @@ def main():
     for name in ("cache", "mdpro3", "output"):
         index.add_argument(name, type=Path)
     index.add_argument("--over-frame", action="store_true")
+    index.add_argument("--performance-metadata", nargs=2, type=Path)
     patch = commands.add_parser("patch")
     patch.add_argument("original", type=Path)
     patch.add_argument("artwork", type=Path)
@@ -313,7 +326,7 @@ def main():
     summon.add_argument("cards", nargs="+")
     args = parser.parse_args()
     if args.command == "index":
-        search_index(args.cache, args.mdpro3, args.output, args.over_frame)
+        search_index(args.cache, args.mdpro3, args.output, args.over_frame, args.performance_metadata)
     elif args.command == "patch":
         make_patch(args.original, args.artwork, args.cid, args.relative, args.artwork_id, args.label, args.output,
                    args.over_frame_gate)
@@ -323,6 +336,7 @@ def main():
     else:
         from summon_animation import make_summon_pack
         cards = [tuple(map(int, spec.split(":"))) for spec in args.cards]
+        cards = [(*card, 0) if len(card) == 3 else card for card in cards]
         make_summon_pack(args.cache, args.originals, args.output, args.pro_directory, cards)
 
 

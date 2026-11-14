@@ -98,7 +98,7 @@ struct ArtworkCollectionsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(collection.name).font(.headline)
             if collection.choices.isEmpty {
-                Text("在卡片搜索里选好一款异画，再点「加入合集」。")
+                Text("在卡片搜索选中卡片，再点「加入合集」。")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -125,23 +125,26 @@ struct ArtworkCollectionsView: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.card?.name ?? "编号 \(entry.id)").font(.body.weight(.medium))
-                if entry.card?.path == nil {
+                if entry.hasArtworkChoice && entry.card?.path == nil {
                     Text("目标卡图暂不可用").font(.caption).foregroundStyle(.orange)
                 }
             }
             Spacer()
-            if let card = entry.card, !card.variants.isEmpty {
+            if let card = entry.card, card.path != nil, !card.variants.isEmpty {
                 Picker(card.name, selection: Binding(
                     get: { entry.variantID },
                     set: { model.setArtworkCollectionChoice(collection.id, cid: entry.id, variant: $0) }
                 )) {
-                    if entry.variant == nil { Text("原选异画已找不到").tag(entry.variantID) }
+                    Text("仅收藏").tag(ArtworkCollection.cardOnly)
+                    if entry.hasArtworkChoice && entry.variant == nil { Text("原选异画已找不到").tag(entry.variantID) }
                     ForEach(Array(card.variants.enumerated()), id: \.element.id) { index, variant in
                         Text("\(variant.overFrame == nil ? "异画" : "超框异画") \(index + 1)").tag(variant.id)
                     }
                 }
                 .labelsHidden()
                 .frame(width: 128)
+            } else if !entry.hasArtworkChoice {
+                Text("仅收藏").font(.caption).foregroundStyle(.secondary)
             }
             Button {
                 model.setArtworkCollectionChoice(collection.id, cid: entry.id, variant: nil)
@@ -154,7 +157,7 @@ struct ArtworkCollectionsView: View {
     }
 
     private var footer: some View {
-        let entries = draft.catalog.flatMap { catalog in collection?.cards(in: catalog) } ?? []
+        let entries = (draft.catalog.flatMap { catalog in collection?.cards(in: catalog) } ?? []).filter(\.hasArtworkChoice)
         let canRestore = !entries.isEmpty && entries.allSatisfy { $0.card?.path != nil }
         let canApply = canRestore && entries.allSatisfy { $0.variant != nil }
         return HStack {
@@ -205,7 +208,8 @@ struct ArtworkCollectionsView: View {
 
     private func apply(restore: Bool = false, all: Bool) {
         guard let collection, let catalog = draft.catalog else { return }
-        draft.submitted = true
-        model.applyArtworkCollection(collection, catalog: catalog, restore: restore, all: all) {}
+        model.applyArtworkCollection(collection, catalog: catalog, restore: restore, all: all) {
+            draft.submitted = true
+        }
     }
 }

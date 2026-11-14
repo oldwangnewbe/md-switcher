@@ -49,6 +49,17 @@ final class SwitcherModel: ObservableObject {
     @Published private(set) var recoveryNeeded = false
     @Published private(set) var status = "正在查找 CrossOver 中的 Master Duel…"
     @Published private(set) var error = false
+    @Published var artworkConfirmation: ArtworkConfirmation?
+
+    struct ArtworkConfirmation {
+        let message: String
+        let apply: (Bool) -> Void
+    }
+
+    private struct QueuedArtworkChoice: Codable {
+        let artworkID: Int
+        let includePerformance: Bool
+    }
     @Published private(set) var royalFinishByAccount =
         UserDefaults.standard.dictionary(forKey: "royalFinishByAccount") as? [String: [Int]] ?? [:] {
         didSet { UserDefaults.standard.set(royalFinishByAccount, forKey: "royalFinishByAccount") }
@@ -63,11 +74,19 @@ final class SwitcherModel: ObservableObject {
     }
 
     private var queuedArtwork = SwitcherModel.loadQueuedArtwork() {
-        didSet { UserDefaults.standard.set(queuedArtwork, forKey: "queuedCardArtwork") }
+        didSet {
+            if let data = try? PropertyListEncoder().encode(queuedArtwork) {
+                UserDefaults.standard.set(data, forKey: "queuedCardArtwork")
+            }
+        }
     }
 
-    private static func loadQueuedArtwork() -> [String: [String: Int]] {
+    private static func loadQueuedArtwork() -> [String: [String: QueuedArtworkChoice]] {
         let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: "queuedCardArtwork"),
+           let choices = try? PropertyListDecoder().decode([String: [String: QueuedArtworkChoice]].self, from: data) {
+            return choices
+        }
         var current = defaults.dictionary(forKey: "queuedCardArtwork") as? [String: [String: Int]] ?? [:]
         if let previous = defaults.dictionary(forKey: "queuedSkyStrikerArtwork") as? [String: [String: Int]],
            let pack = try? SkyStrikerPack.bundled() {
@@ -79,7 +98,7 @@ final class SwitcherModel: ObservableObject {
             defaults.set(current, forKey: "queuedCardArtwork")
             defaults.removeObject(forKey: "queuedSkyStrikerArtwork")
         }
-        return current
+        return current.mapValues { $0.mapValues { QueuedArtworkChoice(artworkID: $0, includePerformance: true) } }
     }
     private let worker = DispatchQueue(label: "md-switcher")
     private let steamRoyalFinishMonitor = SteamRoyalFinishMonitor()
@@ -278,13 +297,15 @@ final class SwitcherModel: ObservableObject {
                 var warnings: [String] = []
                 var royalFinishApplied = false
                 let artwork: ArtworkEdit?
-                if let choices = queuedSelection, let plan, let resources = switcher.resources {
+                if let queuedSelection, let plan, let resources = switcher.resources {
                     do {
+                        let choices = queuedSelection.mapValues(\.artworkID)
+                        let optOut = Set(queuedSelection.keys.filter { queuedSelection[$0]?.includePerformance == false })
                         let library = CardSearchEngine(storage: switcher.storage, proDirectory: switcher.proDirectory)
                         var packs = try library.overFramePacks(for: choices, resources: resources, source: plan.source)
                         packs += choices.compactMap { path, id in library.savedPack(path: path, id: id) }
                         if let bundled = try? SkyStrikerPack.bundled() { packs.append(bundled) }
-                        artwork = ArtworkEdit(choices: choices, packs: packs)
+                        artwork = ArtworkEdit(choices: choices, packs: packs, performanceOptOut: optOut)
                     } catch {
                         warnings.append("排队的异画尚未应用。\(error.localizedDescription)")
                         artwork = nil
@@ -395,27 +416,27 @@ final class SwitcherModel: ObservableObject {
             selections = try SkyStrikerMod(resources: resources, account: context.target).selections()
         }
         if let installation, let account = selected, let queued = queuedArtwork[resourceKey(installation, account.id)] {
-            for (path, id) in queued { selections[path] = id > 0 ? id : nil }
+            for (path, choice) in queued { selections[path] = choice.artworkID > 0 ? choice.artworkID : nil }
         }
         return selections
     }
 
-    func summonSelections() throws -> Set<SummonAnimation> {
+    func summonSelections(catalog: [SummonAnimation] = []) throws -> Set<SummonAnimation> {
         guard let context = modContext, let resources = context.switcher.resources else { return [] }
-        return try SkyStrikerMod(resources: resources, account: context.target).summonSelections()
+        return try SkyStrikerMod(resources: resources, account: context.target).summonSelections(catalog: catalog)
     }
 
     func updateSummonAnimation(_ selected: Set<SummonAnimation>, completed: @escaping (Bool) -> Void) {
         guard canManageMods, let context = modContext else { return }
-        begin(selected.isEmpty ? "正在恢复原召唤演出…" : "正在核对并替换召唤演出…")
+        begin(selected.isEmpty ? "正在恢复原演出…" : "正在准备卡片演出…")
         worker.async { [weak self] in
             let result = Result { try context.switcher.updateSummonAnimation(target: context.target, selected: selected) }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 switch result {
                 case .success(let outcome):
-                    var message = selected.isEmpty ? "已恢复所选账号的原召唤演出。"
-                        : "已应用 \(selected.count) 张异画召唤演出。可进入单人模式测试。"
+                    var message = selected.isEmpty ? "已恢复所选账号的原演出。"
+                        : "已应用 \(selected.count) 张卡的演出。可进入单人模式测试。"
                     if outcome.preserved > 0 { message += "已保留 \(outcome.preserved) 个被游戏或其他 Mod 更新的文件。" }
                     finish(message)
                     completed(true)
@@ -441,9 +462,9 @@ final class SwitcherModel: ObservableObject {
         }
     }
 
-    func applySearchCard(_ card: SearchCard, variant: SearchCard.Variant?, all: Bool,
+    func applySearchCard(_ card: SearchCard, variant: SearchCard.Variant?, all: Bool, started: @escaping () -> Void,
                          completed: @escaping () -> Void) {
-        applyCards([(card, variant)], all: all, completed: completed)
+        applyCards([(card, variant)], all: all, started: started, completed: completed)
     }
 
     func createArtworkCollection(_ name: String) throws -> String {
@@ -462,24 +483,26 @@ final class SwitcherModel: ObservableObject {
     }
 
     func applyArtworkCollection(_ collection: ArtworkCollection, catalog: CardSearchCatalog,
-                                restore: Bool, all: Bool, completed: @escaping () -> Void) {
+                                restore: Bool, all: Bool, started: @escaping () -> Void) {
         var cards: [(SearchCard, SearchCard.Variant?)] = []
-        for entry in collection.cards(in: catalog) {
+        for entry in collection.cards(in: catalog) where entry.hasArtworkChoice {
             guard let card = entry.card, card.path != nil, restore || entry.variant != nil else {
+                started()
                 finish("「\(entry.card?.name ?? String(entry.id))」的卡图资源或异画已找不到，请先调整合集。", failed: true)
                 return
             }
             cards.append((card, restore ? nil : entry.variant))
         }
-        applyCards(cards, all: all, completed: completed)
+        applyCards(cards, all: all, started: started, completed: {})
     }
 
     private func applyCards(_ cards: [(SearchCard, SearchCard.Variant?)], all: Bool,
-                            completed: @escaping () -> Void) {
+                            started: @escaping () -> Void, completed: @escaping () -> Void) {
         guard !cards.isEmpty, let installation, let source = artworkSource(for: installation) else { return }
         var choices: [String: Int] = [:]
         for (card, variant) in cards {
             guard let path = card.path, choices.updateValue(variant?.id ?? 0, forKey: path) == nil else {
+                started()
                 finish("「\(card.name)」的卡图路径未匹配或重复。", failed: true)
                 return
             }
@@ -499,10 +522,15 @@ final class SwitcherModel: ObservableObject {
                 }
             }
         }
-        if all {
-            applyArtworkToAll(choices, makePacks: makePacks, completed: completed)
-        } else {
-            updateArtwork(choices, makePacks: makePacks, completed: completed)
+        let matches = Dictionary(uniqueKeysWithValues: cards.compactMap { card, variant -> (String, [SummonAnimation])? in
+            guard let path = card.path, let variant else { return nil }
+            let options = card.matchingPerformances(artworkID: variant.id)
+            return options.isEmpty ? nil : (path, options)
+        })
+        let name = cards.count == 1 ? cards.first?.0.name : nil
+        confirmArtwork(choices, matches: matches, name: name) { [weak self] optOut in
+            started()
+            self?.applyArtwork(choices, all: all, performanceOptOut: optOut, makePacks: makePacks, completed: completed)
         }
     }
 
@@ -516,23 +544,72 @@ final class SwitcherModel: ObservableObject {
             let engine = CardSearchEngine(storage: switcher.storage, proDirectory: switcher.proDirectory)
             return try engine.overFramePacks(for: choices, resources: resources, source: source) + [pack]
         }
-        if all {
-            applyArtworkToAll(choices, makePacks: makePacks, completed: completed)
-        } else {
-            updateArtwork(choices, makePacks: makePacks, completed: completed)
+        if proDirectory == nil || !choices.values.contains(where: { $0 > 0 }) {
+            applyArtwork(choices, all: all, performanceOptOut: Set(choices.keys), makePacks: makePacks, completed: completed)
+            return
+        }
+        begin("正在检查异画演出…")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let catalog = try await loadCardSearch()
+                let matches = choices.reduce(into: [String: [SummonAnimation]]()) { result, choice in
+                    guard choice.value > 0, let card = catalog.card(artworkPath: choice.key) else { return }
+                    let options = card.matchingPerformances(artworkID: choice.value)
+                    if !options.isEmpty { result[choice.key] = options }
+                }
+                finish("")
+                confirmArtwork(choices, matches: matches, name: nil) { [weak self] optOut in
+                    self?.applyArtwork(choices, all: all, performanceOptOut: optOut, makePacks: makePacks, completed: completed)
+                }
+            } catch {
+                finish(error.localizedDescription, failed: true)
+            }
         }
     }
 
-    private func updateArtwork(_ choices: [String: Int], makePacks: @escaping () throws -> [SkyStrikerPack],
+    private func confirmArtwork(_ choices: [String: Int], matches: [String: [SummonAnimation]], name: String?,
+                                apply: @escaping (Set<String>) -> Void) {
+        let paths = Set(choices.keys)
+        guard !matches.isEmpty else {
+            apply(paths)
+            return
+        }
+        let message: String
+        if let name, let options = matches.values.first {
+            let categories = SummonAnimation.Category.allCases.filter { category in options.contains { $0.category == category } }
+            let labels = categories.map(\.rawValue).joined(separator: "、")
+            message = "「\(name)」的这款异画支持\(labels)。"
+        } else {
+            message = "本次有 \(matches.count) 张异画可同步新增或替换演出。"
+        }
+        artworkConfirmation = ArtworkConfirmation(message: message) { includePerformance in
+            apply(includePerformance ? paths.subtracting(matches.keys) : paths)
+        }
+    }
+
+    private func applyArtwork(_ choices: [String: Int], all: Bool, performanceOptOut: Set<String>,
+                              makePacks: @escaping () throws -> [SkyStrikerPack], completed: @escaping () -> Void) {
+        if all {
+            applyArtworkToAll(choices, performanceOptOut: performanceOptOut, makePacks: makePacks, completed: completed)
+        } else {
+            updateArtwork(choices, performanceOptOut: performanceOptOut, makePacks: makePacks, completed: completed)
+        }
+    }
+
+    private func updateArtwork(_ choices: [String: Int], performanceOptOut: Set<String>,
+                               makePacks: @escaping () throws -> [SkyStrikerPack],
                                completed: @escaping () -> Void) {
-        guard canManageMods, let context = modContext, let installation, let account = selected else { return }
+        guard canManageMods, let context = modContext, let installation, let account = selected,
+              let source = artworkSource(for: installation) else { return }
         let key = resourceKey(installation, account.id)
         let edit = ArtworkEdit(choices: choices, packs: [])
         begin(edit.selections.isEmpty ? "正在恢复原卡图…" : "正在校验和安装异画…")
         worker.async { [weak self] in
             do {
                 let result = try context.switcher.updateSkyStriker(target: context.target, selected: edit.selections,
-                                                                  pack: nil, scope: edit.scope, additionalPacks: makePacks())
+                    pack: nil, scope: edit.scope, additionalPacks: makePacks(), source: source,
+                    performanceOptOut: performanceOptOut)
                 DispatchQueue.main.async { [weak self] in
                     if let self, let previous = queuedArtwork[key] {
                         let remaining = previous.filter { !edit.scope.contains($0.key) }
@@ -555,10 +632,11 @@ final class SwitcherModel: ObservableObject {
         }
     }
 
-    private func applyArtworkToAll(_ choices: [String: Int], makePacks: @escaping () throws -> [SkyStrikerPack],
+    private func applyArtworkToAll(_ choices: [String: Int], performanceOptOut: Set<String>,
+                                   makePacks: @escaping () throws -> [SkyStrikerPack],
                                    completed: @escaping () -> Void) {
         guard canApplyArtworkToAll, let installation, let source = artworkSource(for: installation) else { return }
-        let switcher = Switcher(installation: installation)
+        let switcher = Switcher(installation: installation, proDirectory: proDirectory)
         let accounts = accounts.map { account in
             let key = resourceKey(installation, account.id)
             return (key: key, name: aliases[String(account.id)] ?? account.displayName,
@@ -572,7 +650,7 @@ final class SwitcherModel: ObservableObject {
         worker.async { [weak self] in
             do {
                 let outcomes = try switcher.updateSkyStriker(targets: targets, source: source, selected: selection,
-                                                            pack: nil, scope: edit.scope, additionalPacks: makePacks())
+                    pack: nil, scope: edit.scope, additionalPacks: makePacks(), performanceOptOut: performanceOptOut)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     var pending = queuedArtwork
@@ -592,7 +670,10 @@ final class SwitcherModel: ObservableObject {
                             failures.append("\(account.name)：资源目录关联有冲突。")
                         case .waitingForResources?, nil:
                             if !selection.isEmpty {
-                                remaining.merge(choices) { _, new in new }
+                                for (path, id) in choices {
+                                    remaining[path] = QueuedArtworkChoice(artworkID: id,
+                                        includePerformance: !performanceOptOut.contains(path))
+                                }
                                 waiting += 1
                             }
                         }

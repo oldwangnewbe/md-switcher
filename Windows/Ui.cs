@@ -264,6 +264,11 @@ internal class RoundedButton : Button
                 graphics.DrawPolygon(pen, [new Point(8, 1), new(9, 6), new(14, 8), new(9, 9),
                     new(8, 15), new(6, 9), new(1, 8), new(6, 6)]);
             }
+            else if (NavIcon == 6)
+            {
+                graphics.DrawRectangle(pen, 1, 3, 14, 10);
+                graphics.DrawPolygon(pen, [new Point(6, 5), new(11, 8), new(6, 11)]);
+            }
             else
             {
                 graphics.DrawLine(pen, 1, 4, 15, 4);

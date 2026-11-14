@@ -1,16 +1,65 @@
 import Foundation
 
-struct SummonAnimation: Hashable, Identifiable {
+struct SummonAnimation: Codable, Hashable, Identifiable {
+    enum ActivationStyle: Int, Codable {
+        case standard = 1, with4x3, withOpening, both = 5
+    }
+
+    enum Category: String, CaseIterable {
+        case replacement = "召唤演出替换"
+        case activation = "发动演出替换"
+        case addition = "新增召唤演出"
+
+        var description: String {
+            switch self {
+            case .replacement: "让已有召唤演出的普通版卡片播放异画版演出。"
+            case .activation: "让普通版卡片播放异画版的发动演出。"
+            case .addition: "为原版没有召唤演出的卡片添加 MDPro3 演出。"
+            }
+        }
+    }
+
     let cid: Int
     let artworkID: Int
     let name: String
     let donor: Int?
+    let activationStyle: ActivationStyle?
+    let addsSummon: Bool
+
+    init(cid: Int, artworkID: Int, name: String, donor: Int? = nil,
+         activationStyle: ActivationStyle? = nil, addsSummon: Bool = false) {
+        self.cid = cid
+        self.artworkID = artworkID
+        self.name = name
+        self.donor = donor
+        self.activationStyle = activationStyle
+        self.addsSummon = addsSummon
+    }
+
+    var category: Category {
+        if addsSummon { return .addition }
+        return activationStyle == nil ? .replacement : .activation
+    }
+
+    var packKind: Int { addsSummon ? 4 : activationStyle?.rawValue ?? 0 }
+    var sourceAvailableWithoutMDPro3: Bool { donor != nil }
+
+    struct Slot: Hashable {
+        let cid: Int
+        let activation: Bool
+    }
+
+    var slot: Slot { Slot(cid: cid, activation: activationStyle != nil) }
 
     static let catalogPath = "70/70e201b4"
     static let gatePath = "60/60c98f0d"
     static let kagari = Self(cid: 13668, artworkID: 63288574, name: "闪刀姬－篝", donor: 3899)
     static let shizuku = Self(cid: 13669, artworkID: 90673289, name: "闪刀姬－雫", donor: 3433)
-    static let all: [Self] = [
+    // Used only to read journals from before the local catalog stored full selections.
+    static let legacyOptions: [Self] = [
+        .init(cid: 5328, artworkID: 32807848, name: "增援", donor: 20040, activationStyle: .with4x3),
+        .init(cid: 13619, artworkID: 24224831, name: "墓穴指名者", donor: 21233, activationStyle: .withOpening),
+        .init(cid: 13671, artworkID: 63166096, name: "闪刀起动－交闪", donor: 3434, activationStyle: .standard),
         kagari, shizuku,
         .init(cid: 4041, artworkID: 46986419, name: "黑魔导", donor: 3863),
         .init(cid: 4041, artworkID: 46986421, name: "黑魔导", donor: 3880),
@@ -41,13 +90,33 @@ struct SummonAnimation: Hashable, Identifiable {
         .init(cid: 15626, artworkID: 9205574, name: "邪恶★双子 姬丝吉尔", donor: 3437),
         .init(cid: 11257, artworkID: 94977270, name: "神影依・米德拉什", donor: 3895),
         .init(cid: 15123, artworkID: 95440947, name: "黄金卿埃尔德里奇", donor: 3423),
+        .init(cid: 13670, artworkID: 26077389, name: "闪刀姬－零衣", addsSummon: true),
+        .init(cid: 4766, artworkID: 38033121, name: "黑魔导女孩", addsSummon: true),
+        .init(cid: 6653, artworkID: 89943723, name: "元素－英雄 新宇侠", addsSummon: true),
+        .init(cid: 12321, artworkID: 50954680, name: "水晶翼同步龙", addsSummon: true),
+        .init(cid: 12639, artworkID: 1621413, name: "暗镇魂超量龙", addsSummon: true),
+        .init(cid: 14203, artworkID: 73639099, name: "露珠之虫惑魔", addsSummon: true),
+        .init(cid: 14759, artworkID: 13171876, name: "龙女仆・清扫龙女", addsSummon: true),
+        .init(cid: 16493, artworkID: 55273560, name: "白之圣女 艾克利西亚", addsSummon: true),
     ]
-    static var scope: Set<String> { Set(all.flatMap(\.paths) + [catalogPath, gatePath]) }
-    var id: Int { artworkID }
+    static var scope: Set<String> { Set(legacyOptions.flatMap(\.paths) + [catalogPath, gatePath]) }
+    var id: String { "\(cid):\(artworkID):\(packKind)" }
 
     var paths: [String] {
-        ["SD", "HighEnd_HD"].map { quality in
-            let logical = "Duel/Timeline/Duel/MonsterCutIn/tcg/P\(cid)/\(quality)/P\(cid)"
+        let names: [String]
+        if let activationStyle {
+            let token = String(format: "Ef%05d", cid)
+            let root = "Duel/Timeline/Card/tcg/\(token)/\(token)"
+            switch activationStyle {
+            case .standard: names = [root]
+            case .with4x3: names = [root, root + "_4x3"]
+            case .withOpening: names = [root, root + "Op"]
+            case .both: names = [root, root + "_4x3", root + "Op"]
+            }
+        } else {
+            names = ["SD", "HighEnd_HD"].map { "Duel/Timeline/Duel/MonsterCutIn/tcg/P\(cid)/\($0)/P\(cid)" }
+        }
+        return names.map { logical in
             var crc = UInt32.max
             for byte in logical.utf8 {
                 crc ^= UInt32(byte)
@@ -58,15 +127,4 @@ struct SummonAnimation: Hashable, Identifiable {
         }
     }
 
-    static func hasSource(artworkID: Int, proDirectory: URL) -> Bool {
-        let root = proDirectory.appendingPathComponent("MDPro3_Data/StandaloneWindows64")
-        let fm = FileManager.default
-        var directory: ObjCBool = false
-        if fm.fileExists(atPath: root.appendingPathComponent("MonsterCutin2/\(artworkID)").path,
-                         isDirectory: &directory), !directory.boolValue { return true }
-        let folder = root.appendingPathComponent("MonsterCutin/\(artworkID)")
-        return (try? fm.contentsOfDirectory(atPath: folder.path).contains {
-            $0.utf8.count == 8 && UInt32($0, radix: 16) != nil
-        }) == true
-    }
 }

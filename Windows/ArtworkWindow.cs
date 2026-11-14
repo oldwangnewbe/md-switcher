@@ -259,12 +259,15 @@ internal sealed partial class ArtworkPage : UserControl
         if (card is not null)
         {
             var applied = AppliedVariant(card);
-            var saved = inCollections && card.Cid is int cid ? SelectedCollection?.Choices.GetValueOrDefault(cid) : null;
-            Option[] variants = [new Option("原卡图", null), .. card.Variants.Select((variant, index) => new Option(
+            int? saved = inCollections && card.Cid is int cid && SelectedCollection is { } set &&
+                set.Choices.TryGetValue(cid, out var savedId) ? savedId : null;
+            Option[] variants = [new Option(inCollections ? "仅收藏" : "原卡图", null), .. card.Variants.Select((variant, index) => new Option(
                 $"{(variant.OverFrame is null ? "异画" : "超框异画")} {index + 1}" +
                 (!variant.CanApply ? "  ·  缺少超框登记" : variant.Id == applied ? "  ·  当前使用" : ""), variant))];
-            var selected = variants.FirstOrDefault(option => option.Variant?.Id == (preferredVariant ?? saved ?? applied));
-            if (preferredVariant is null && saved is not null && selected is not { Variant.CanApply: true })
+            var selectedId = preferredVariant ?? saved ?? applied;
+            var selected = variants.FirstOrDefault(option => (option.Variant?.Id ?? ArtworkCollection.CardOnly) ==
+                (selectedId ?? ArtworkCollection.CardOnly));
+            if (preferredVariant is null && saved is > 0 && selected is not { Variant.CanApply: true })
             {
                 selected = new Option("合集所选异画不可用", null);
                 variants = [selected, .. variants];
@@ -337,9 +340,10 @@ internal sealed partial class ArtworkPage : UserControl
         all.Enabled = !busy && targets.Length > 0;
         newCollection.Enabled = !busy && entries.Length > 0 && collectionsError is null;
         collectionPicker.Enabled = !busy;
-        addToCollection.Enabled = canChoose && collectionsError is null;
-        saveChoice.Enabled = canChoose && SelectedCollection is { } set && card?.Cid is int cid &&
-            set.Choices.GetValueOrDefault(cid) != variant?.Id;
+        addToCollection.Enabled = !busy && !searchDelay.Enabled && card?.Cid is not null && collectionsError is null;
+        saveChoice.Enabled = !busy && !searchDelay.Enabled && (variant is null || canChoose) &&
+            SelectedCollection is { } set && card?.Cid is int cid &&
+            set.Choices.GetValueOrDefault(cid, -1) != (variant?.Id ?? ArtworkCollection.CardOnly);
         removeChoice.Enabled = !busy && SelectedCollection is not null && card?.Cid is not null;
         var canEdit = !busy && !searchDelay.Enabled && hasTarget;
         if (inCollections)
@@ -371,6 +375,19 @@ internal sealed partial class ArtworkPage : UserControl
         if (edits is not { Length: > 0 }) return;
         var selected = all.Checked ? targets : target is null ? [] : [target];
         if (selected.Length == 0) return;
+        var matches = edits.Where(edit => edit.Variant is not null)
+            .Select(edit => (edit.Card, Options: edit.Card.MatchingPerformances(edit.Variant!.Id)))
+            .Where(match => match.Options.Length > 0).ToArray();
+        if (matches.Length > 0)
+        {
+            var description = edits.Length == 1
+                ? $"「{matches[0].Card.Name}」的这款异画支持{string.Join("、", matches[0].Options.Select(option => option.Category).Distinct())}。"
+                : $"本次有 {matches.Length} 张异画可同步新增或替换演出。";
+            var choice = PerformanceConfirmation.Show(this, description);
+            if (choice == DialogResult.Cancel) return;
+            if (choice == DialogResult.No)
+                edits = edits.Select(edit => edit with { IncludePerformance = false }).ToArray();
+        }
         SetBusy(true);
         UpdateButtons();
         notice.Text = restoreOriginal ? "正在核对并恢复原画…" : "正在校验并应用异画…";

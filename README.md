@@ -2,12 +2,12 @@
 
 # 决斗匣 · DuelShelf
 
-《游戏王 Master Duel》桌面工具。切换本机 Steam 账号、复用已下载的游戏资源，并按账号设置异画和动态镜碎。
+《游戏王 Master Duel》桌面工具。切换本机 Steam 账号、复用已下载的游戏资源，并按账号设置异画、卡片演出和动态镜碎。
 
 | 平台 | 安装包 | 需要准备 |
 | --- | --- | --- |
-| Windows 10 / 11 x64 | [下载 ZIP](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.14/DuelShelf-Windows-x64-0.9.14.zip) | 安装 Steam 和《Master Duel》 |
-| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.14/DuelShelf-macOS-arm64-0.9.14.dmg) | 在同一个 CrossOver 容器里安装 Steam 和《Master Duel》 |
+| Windows 10 / 11 x64 | [下载 ZIP](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.20/DuelShelf-Windows-x64-0.9.20.zip) | 安装 Steam 和《Master Duel》 |
+| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.20/DuelShelf-macOS-arm64-0.9.20.dmg) | 在同一个 CrossOver 容器里安装 Steam 和《Master Duel》 |
 
 ## Windows 怎么用
 
@@ -41,11 +41,11 @@
 
 </details>
 
-## 异画、镜碎和召唤动画
+## 异画、镜碎和卡片演出
 
-- **异画**：在「设置」连接本机 MDPro3。退出游戏后，从「卡片搜索」预览并应用普通或超框异画，或用「异画合集」批量应用、恢复原画。
+- **异画**：在「设置」连接本机 MDPro3。退出游戏后，从「卡片搜索」预览并应用普通或超框异画，或用「异画合集」批量应用、恢复原画。有对应演出的画款会提示是否一并应用。
 - **动态镜碎**：选中账号，在「动态镜碎」按卡片或合集开启。保持决斗匣运行，下次从决斗匣或 Steam 启动游戏时会自动加载。效果仅在本机显示。
-- **召唤动画（仅 macOS）**：在「召唤动画」选择异画的演出，可替换游戏已有的对应演出，也可恢复原演出。
+- **卡片演出**：在「卡片演出」按卡名或画款编号查找。可替换已有的召唤或发动演出，也可为符合条件的卡新增召唤演出。支持恢复原演出。
 
 > 异画和动画会修改本地资源，动态镜碎会向游戏进程加载 DLL。请先备份并核对游戏与平台条款。游戏更新可能导致功能失效，运营方也可能限制账号使用。项目供个人学习和非商业使用，安装包不附带游戏素材。
 

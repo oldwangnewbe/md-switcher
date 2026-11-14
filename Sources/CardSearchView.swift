@@ -103,8 +103,7 @@ struct CardSearchView: View {
                         draft.creatingCollection = true
                     }
                 }
-                .disabled(draft.card?.path == nil || draft.variantID == nil || model.busy)
-                .help("选好一款异画后加入合集")
+                .disabled(draft.card?.cid == nil || model.busy)
                 Button("应用到所选账号") { apply(all: false) }
                     .disabled(draft.card?.path == nil || !model.canManageMods)
                     .buttonStyle(.borderedProminent)
@@ -216,33 +215,36 @@ struct CardSearchView: View {
                 Text(chosen?.overFrame == nil ? "应用会替换这张卡在《大师决斗》里的卡图。" : "应用后会在《大师决斗》里显示完整超框卡面。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if let chosen {
-                summonOptions(for: card, artworkID: chosen.id)
-            }
+            summonOptions(for: card, artworkID: chosen?.id)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
-    private func summonOptions(for card: SearchCard, artworkID: Int) -> some View {
-        let hasSource = model.proDirectory.map { SummonAnimation.hasSource(artworkID: artworkID, proDirectory: $0) } ?? false
-        if hasSource, let option = SummonAnimation.all.first(where: { $0.cid == card.cid && $0.artworkID == artworkID }) {
+    private func summonOptions(for card: SearchCard, artworkID: Int?) -> some View {
+        let options = card.matchingPerformances(artworkID: artworkID)
+        ForEach(options) { option in
             let installed = draft.summons.contains(option)
-            HStack(spacing: 8) {
-                Text("MDPro3 有召唤动画").font(.caption).foregroundStyle(.secondary)
-                Button(installed ? "恢复原演出" : "应用这款召唤动画") {
-                    var next = draft.summons.filter { $0.cid != option.cid }
+            let installedArtwork = card.path.flatMap { draft.installed[$0] }
+            if installedArtwork == artworkID {
+                Button(installed ? "恢复原演出" : option.category.rawValue) {
+                    var next = draft.summons.filter { $0.slot != option.slot }
                     if !installed { next.insert(option) }
                     draft.submitted = true
                     model.updateSummonAnimation(next) { success in
-                        if success, let choices = try? model.summonSelections() { draft.summons = choices }
+                        if success, let choices = try? model.summonSelections(catalog: draft.catalog?.performances ?? []) {
+                            draft.summons = choices
+                        }
                     }
                 }
                 .disabled(!model.canManageMods)
+            } else {
+                Text("可同时应用\(option.category == .activation ? "发动" : "召唤")演出")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-        } else {
-            Text(hasSource ? "当前仅支持替换已有的召唤演出" : "MDPro3 未找到这款异画的召唤动画")
-                .font(.caption).foregroundStyle(.secondary)
+        }
+        if options.isEmpty && artworkID != nil {
+            Text("这款异画没有匹配的演出素材").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -253,7 +255,7 @@ struct CardSearchView: View {
             let catalog = try await model.loadCardSearch()
             try Task.checkCancellation()
             let installed = try model.artworkSelections()
-            let summons = try model.summonSelections()
+            let summons = try model.summonSelections(catalog: catalog.performances)
             let scope = (model.selectedID, model.installation?.game)
             let path = draft.card?.path
             let resetVariant = draft.accountScope != scope || path.flatMap { draft.installed[$0] } != path.flatMap { installed[$0] }
@@ -274,16 +276,18 @@ struct CardSearchView: View {
     private func apply(all: Bool) {
         guard let card = draft.card else { return }
         let variant = card.variants.first { $0.id == draft.variantID }
-        draft.submitted = true
-        model.applySearchCard(card, variant: variant, all: all) {
+        model.applySearchCard(card, variant: variant, all: all, started: { draft.submitted = true }) {
             if let selection = try? model.artworkSelections() { draft.installed = selection }
+            if let choices = try? model.summonSelections(catalog: draft.catalog?.performances ?? []) { draft.summons = choices }
         }
     }
 
     private func add(to id: String) {
-        guard let card = draft.card, let cid = card.cid, let variant = draft.variantID,
+        guard let card = draft.card, let cid = card.cid,
               let collection = model.artworkCollections.first(where: { $0.id == id }) else { return }
-        model.setArtworkCollectionChoice(id, cid: cid, variant: variant)
+        let variant = card.path == nil ? nil : draft.variantID
+        let selection = variant ?? collection.choices[cid] ?? ArtworkCollection.cardOnly
+        model.setArtworkCollectionChoice(id, cid: cid, variant: selection)
         draft.collectionMessage = "「\(card.name)」已加入「\(collection.name)」。"
     }
 }

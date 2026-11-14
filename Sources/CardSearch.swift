@@ -23,9 +23,17 @@ struct SearchCard: Codable, Identifiable {
     let series: [String]?
     var previewFile: String? = nil
     var originalPreviewPath: String? = nil
+    var originalArtworkID: Int? = nil
+    var performances: [SummonAnimation]? = nil
 
     var name: String { masterName ?? proName ?? id }
     var hasReplaceableArtwork: Bool { path != nil && !variants.isEmpty }
+
+    func matchingPerformances(artworkID: Int?) -> [SummonAnimation] {
+        guard let artworkID = artworkID ?? originalArtworkID else { return [] }
+        return (performances ?? []).filter { $0.artworkID == artworkID }
+    }
+
     var royalCardIDs: Set<Int> {
         guard let cid else { return [] }
         return Set(([cid] + masterIDs).filter(RoyalFinish.supports))
@@ -64,6 +72,7 @@ struct CardSearchCatalog {
 
     func card(cid: Int) -> SearchCard? { byCID[cid] }
     func card(artworkPath: String) -> SearchCard? { entries.first { $0.card.path == artworkPath }?.card }
+    var performances: [SummonAnimation] { entries.flatMap { $0.card.performances ?? [] } }
 
     func thumbnailURL(for card: SearchCard) -> URL? {
         card.previewFile.map { artDirectory.appendingPathComponent($0) }
@@ -130,7 +139,7 @@ struct CardSearchEngine {
     }
 
     // Bump when card_search.py changes how it builds the search index.
-    private static let indexFormat = 4
+    private static let indexFormat = 5
     // Keep in sync with the manifest emitted by card_search.py.
     private static let patchFormat = 1
     let storage: URL
@@ -163,7 +172,19 @@ struct CardSearchEngine {
         let work = try temporaryDirectory(in: FileManager.default.temporaryDirectory)
         defer { try? fm.removeItem(at: work) }
         let output = work.appendingPathComponent("index.json")
-        try run(["index", cache.path, proDirectory.path, output.path, "--over-frame"], in: work)
+        var arguments = ["index", cache.path, proDirectory.path, output.path, "--over-frame"]
+        let account = cache.deletingLastPathComponent()
+        let resources = ResourceReuse(root: account.deletingLastPathComponent())
+        let metadata = [SummonAnimation.catalogPath, SummonAnimation.gatePath]
+        if metadata.allSatisfy({ fm.fileExists(atPath: cache.appendingPathComponent($0).path) }) {
+            let inputs = try metadata.map { path in
+                let file = work.appendingPathComponent(String(path.suffix(8)))
+                try resources.originalArtwork(account: account.lastPathComponent, path: path).write(to: file)
+                return file.path
+            }
+            arguments += ["--performance-metadata"] + inputs
+        }
+        try run(arguments, in: work)
         let cards = try JSONDecoder().decode([SearchCard].self, from: Data(contentsOf: output))
         guard !cards.isEmpty else { throw SwitchError("本机卡库没有可索引的卡片。") }
         guard fingerprint == (try? indexFingerprint(cache: cache, art: art, proDirectory: proDirectory)) else {
@@ -218,6 +239,13 @@ struct CardSearchEngine {
                 if (info.st_mode & S_IFMT) == S_IFREG {
                     parts.append("\(name):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)")
                 }
+            }
+        }
+        let animation = proDirectory.appendingPathComponent("MDPro3_Data/StandaloneWindows64/MonsterCutin2")
+        if let files = try? fm.contentsOfDirectory(at: animation, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) {
+            for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where Int(file.lastPathComponent) != nil {
+                let stamp = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                parts.append("\(file.lastPathComponent):\(stamp.fileSize ?? 0):\(stamp.contentModificationDate?.timeIntervalSince1970 ?? 0)")
             }
         }
         return artworkDigest(Data(parts.joined(separator: "\0").utf8))
@@ -318,7 +346,7 @@ struct CardSearchEngine {
 
     func makeSummonPack(cache: URL, originals: [String: Data], selected: Set<SummonAnimation>,
                         work: URL) throws -> SkyStrikerPack {
-        let proDirectory = try requireMDPro3()
+        let pro = selected.allSatisfy(\.sourceAvailableWithoutMDPro3) ? work : try requireMDPro3()
         let input = work.appendingPathComponent("originals")
         let output = work.appendingPathComponent("pack")
         let fm = FileManager.default
@@ -328,9 +356,9 @@ struct CardSearchEngine {
             try data.write(to: input.appendingPathComponent(String(path.suffix(8))))
         }
         let cards = selected.sorted { $0.cid < $1.cid }.map {
-            "\($0.cid):\($0.artworkID):\($0.donor ?? 0)"
+            "\($0.cid):\($0.artworkID):\($0.donor ?? 0):\($0.packKind)"
         }
-        try run(["summon", cache.path, input.path, output.path, proDirectory.path] + cards, in: work)
+        try run(["summon", cache.path, input.path, output.path, pro.path] + cards, in: work)
         return try SkyStrikerPack(directory: output)
     }
 
@@ -373,7 +401,7 @@ struct CardSearchEngine {
             let detail = log.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
             let message = switch arguments.first {
             case "index": "读取卡片索引失败。"
-            case "summon": "无法准备召唤动画。"
+            case "summon": "无法准备卡片演出。"
             case "over-frame-gate": "无法更新超框登记。"
             default: "无法生成这张卡的替换资源。"
             }

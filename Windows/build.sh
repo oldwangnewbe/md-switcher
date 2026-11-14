@@ -21,7 +21,7 @@ printf 'python313.zip\n.\nsite\nimport site\n' > "$engine/python313._pth"
 "$python" -m pip --disable-pip-version-check install --platform win_amd64 --python-version 3.13 \
     --implementation cp --abi cp313 --only-binary=:all: --no-compile --target "$engine/site" \
     -r "$project/Windows/card-engine-requirements.txt"
-cp "$project"/Scripts/{card_search,generate_sky_striker,over_frame}.py "$engine/"
+cp "$project"/Scripts/{card_search,generate_sky_striker,over_frame,summon_animation}.py "$engine/"
 "$project/RoyalFinish/build.sh" "$work/package/RoyalFinish"
 
 "$dotnet" publish "$app_project" -c Release -r win-x64 --self-contained true \

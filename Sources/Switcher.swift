@@ -86,7 +86,7 @@ struct Switcher: Sendable {
             }
             if launchGame, let folder = knownResourceFolder, let resources,
                (try? resources.accountDirectories().contains(folder)) == true {
-                _ = try removeAddedSummonAnimations(in: resources, account: folder)
+                _ = try removeLegacySummonAnimations(in: resources, account: folder)
                 try SkyStrikerMod(resources: resources, account: folder).requireSummonReady()
             }
             let activeAccount: () throws -> UInt64?
@@ -101,7 +101,7 @@ struct Switcher: Sendable {
                 let folder = try prepareForLaunch(resourceLaunch, account: id, activeAccount: activeAccount,
                                                   record: recordResourceDirectory, report: report)
                 let resources = try resourceReuse()
-                _ = try removeAddedSummonAnimations(in: resources, account: folder)
+                _ = try removeLegacySummonAnimations(in: resources, account: folder)
                 try SkyStrikerMod(resources: resources, account: folder).requireSummonReady()
                 if syncMainLanguage, let game = installation.game {
                     report(.syncingGameLanguage)
@@ -118,11 +118,10 @@ struct Switcher: Sendable {
                 }
                 if let queuedArtwork {
                     do {
-                        _ = try SkyStrikerMod(resources: resourceReuse(), account: folder)
-                            .update(queuedArtwork.selections, pack: nil, scope: queuedArtwork.scope,
-                                    additionalPacks: queuedArtwork.packs) {
-                                try requireGameClosed(verifiedProcesses(account: id, activeAccount: activeAccount))
-                            }
+                        let mod = try SkyStrikerMod(resources: resources, account: folder)
+                        try requireGameClosed(verifiedProcesses(account: id, activeAccount: activeAccount))
+                        _ = try applyArtworkEdit(queuedArtwork, in: resources, source: resourceLaunch.source,
+                                                 account: folder, mod: mod)
                         report(.queuedArtworkApplied)
                     } catch {
                         report(.artworkWarning("异画尚未应用。\(error.localizedDescription)"))
@@ -331,14 +330,64 @@ struct Switcher: Sendable {
 
     func updateSkyStriker(target: String, selected: [String: Int],
                           pack: SkyStrikerPack?, scope: Set<String>? = nil,
-                          additionalPacks: [SkyStrikerPack] = []) throws -> SkyStrikerMod.Result {
+                          additionalPacks: [SkyStrikerPack] = [], source: String? = nil,
+                          performanceOptOut: Set<String> = []) throws -> SkyStrikerMod.Result {
         try withLock {
             guard !hasPendingRecovery else { throw SwitchError("请先恢复 Steam 登录设置。") }
-            let mod = try SkyStrikerMod(resources: resourceReuse(), account: target)
+            let resources = try resourceReuse()
+            let mod = try SkyStrikerMod(resources: resources, account: target)
+            if let source, let scope {
+                let choices = Dictionary(uniqueKeysWithValues: scope.map { ($0, selected[$0] ?? 0) })
+                return try applyArtworkEdit(ArtworkEdit(choices: choices,
+                    packs: (pack.map { [$0] } ?? []) + additionalPacks,
+                    performanceOptOut: performanceOptOut), in: resources, source: source,
+                    account: target, mod: mod)
+            }
             return try mod.update(selected, pack: pack, scope: scope, additionalPacks: additionalPacks) {
                 try requireGameClosed(client.processes())
             }
         }
+    }
+
+    private func applyArtworkEdit(_ artwork: ArtworkEdit, in resources: ResourceReuse, source: String,
+                                  account: String, mod: SkyStrikerMod) throws -> SkyStrikerMod.Result {
+        let check = { try requireGameClosed(client.processes()) }
+        try check()
+        guard proDirectory != nil else {
+            return try mod.update(artwork.selections, pack: nil, scope: artwork.scope,
+                                  additionalPacks: artwork.packs, checkGameClosed: check)
+        }
+        let engine = CardSearchEngine(storage: storage, proDirectory: proDirectory)
+        let index = try engine.index(cache: resources.artworkCache(account: source))
+        let current = try mod.summonSelections(catalog: index.performances)
+        var selected = current
+        let installed = try mod.selections()
+        for option in current {
+            guard let card = index.card(cid: option.cid), let path = card.path,
+                  artwork.choices[path] == nil, let printID = installed[path],
+                  printID != option.artworkID else { continue }
+            selected.remove(option)
+            if let match = card.performances?.first(where: { $0.slot == option.slot && $0.artworkID == printID }) {
+                selected.insert(match)
+            }
+        }
+        for (path, artworkID) in artwork.choices {
+            guard let card = index.card(artworkPath: path), let cid = card.cid else { continue }
+            if artwork.performanceOptOut.contains(path) {
+                selected = selected.filter { $0.cid != cid || $0.artworkID == artworkID }
+            } else {
+                selected = selected.filter { $0.cid != cid }
+                if artworkID > 0 {
+                    selected.formUnion(card.matchingPerformances(artworkID: artworkID))
+                }
+            }
+        }
+        if selected != current {
+            let result = try replaceSummonAnimations(selected, in: resources, account: account, mod: mod, artwork: artwork)
+            return .init(installed: artwork.selections.count, preserved: result.preserved)
+        }
+        return try mod.update(artwork.selections, pack: nil, scope: artwork.scope,
+                              additionalPacks: artwork.packs, checkGameClosed: check)
     }
 
     func updateSummonAnimation(target: String, selected: Set<SummonAnimation>) throws -> SkyStrikerMod.Result {
@@ -350,39 +399,42 @@ struct Switcher: Sendable {
         }
     }
 
-    func removeAddedSummonAnimations() throws -> Int {
+    func removeLegacySummonAnimations() throws -> Int {
         try withLock {
             let resources = try resourceReuse()
             var count = 0
             for account in try resources.accountDirectories().sorted() {
-                if try removeAddedSummonAnimations(in: resources, account: account) { count += 1 }
+                if try removeLegacySummonAnimations(in: resources, account: account) { count += 1 }
             }
             return count
         }
     }
 
-    private func removeAddedSummonAnimations(in resources: ResourceReuse, account: String) throws -> Bool {
+    private func removeLegacySummonAnimations(in resources: ResourceReuse, account: String) throws -> Bool {
         let mod = try SkyStrikerMod(resources: resources, account: account)
-        guard try mod.hasAddedSummonTriggers() else { return false }
+        guard try mod.hasLegacySummonTriggers() else { return false }
         _ = try replaceSummonAnimations(mod.summonSelections(), in: resources, account: account, mod: mod)
         return true
     }
 
     private func replaceSummonAnimations(_ selected: Set<SummonAnimation>, in resources: ResourceReuse,
-                                         account: String, mod: SkyStrikerMod) throws -> SkyStrikerMod.Result {
+                                         account: String, mod: SkyStrikerMod,
+                                         artwork: ArtworkEdit? = nil) throws -> SkyStrikerMod.Result {
         let check = { try requireGameClosed(client.processes()) }
         try check()
-        let scope = try SummonAnimation.scope.union(mod.addedSummonFiles())
-        if selected.isEmpty { return try mod.update([:], pack: nil, scope: scope, checkGameClosed: check) }
-        guard selected.isSubset(of: Set(SummonAnimation.all)) else {
-            throw SwitchError("当前仅支持替换原有的召唤演出。")
+        let scope = try mod.summonScope().union(artwork?.scope ?? [])
+        if selected.isEmpty {
+            return try mod.update(artwork?.selections ?? [:], pack: nil, scope: scope,
+                                  additionalPacks: artwork?.packs ?? [], checkGameClosed: check)
         }
-        guard Set(selected.map(\.cid)).count == selected.count else {
-            throw SwitchError("每张卡只能选择一款召唤动画。")
+        guard Set(selected.map(\.slot)).count == selected.count else {
+            throw SwitchError("每张卡最多选择一种召唤演出和一种发动演出。")
         }
 
         let usesTemplate = selected.contains { $0.donor == nil }
-        let existing = Set(selected.flatMap(\.paths)).union([SummonAnimation.catalogPath])
+        let newPrefabs = Set(selected.filter(\.addsSummon).flatMap(\.paths))
+        var existing = Set(selected.flatMap(\.paths)).subtracting(newPrefabs).union([SummonAnimation.catalogPath])
+        if !newPrefabs.isEmpty { existing.insert(SummonAnimation.gatePath) }
         var originals: [String: Data] = [:]
         let inputs = existing.union(usesTemplate ? SummonAnimation.kagari.paths : [])
         for path in inputs { originals[path] = try resources.originalArtwork(account: account, path: path) }
@@ -393,7 +445,7 @@ struct Switcher: Sendable {
         let engine = CardSearchEngine(storage: storage, proDirectory: proDirectory)
         let pack = try engine.makeSummonPack(cache: resources.artworkCache(account: account),
                                              originals: originals, selected: selected, work: work)
-        var files: [String: Int] = [:]
+        var files = artwork?.selections ?? [:]
         var added: Set<String> = []
         for card in pack.cards {
             guard card.variants.count == 1, let variant = card.variants.first,
@@ -403,15 +455,18 @@ struct Switcher: Sendable {
             }
             if card.originalSHA256 == nil { added.insert(card.path) }
         }
-        guard Set(files.keys).isSuperset(of: existing), usesTemplate || added.isEmpty else {
+        guard Set(files.keys).isSuperset(of: existing.union(newPrefabs)), usesTemplate || added == newPrefabs else {
             throw SwitchError("召唤动画包缺少资源或范围不匹配。")
         }
-        return try mod.update(files, pack: pack, scope: scope.union(added), newSummonPaths: added,
-                              summonChoices: Set(selected.map(\.id)), checkGameClosed: check)
+        let paths = Set(pack.cards.map(\.path))
+        return try mod.update(files, pack: pack, scope: scope.union(paths), additionalPacks: artwork?.packs ?? [],
+                              newSummonPaths: added, summonChoices: Set(selected.map(\.artworkID)),
+                              performances: selected, performancePaths: paths, checkGameClosed: check)
     }
     func updateSkyStriker(targets: [String], source: String, selected: [String: Int],
                           pack: SkyStrikerPack?, scope: Set<String>? = nil,
-                          additionalPacks: [SkyStrikerPack] = []) throws -> [String: ArtworkOutcome] {
+                          additionalPacks: [SkyStrikerPack] = [],
+                          performanceOptOut: Set<String> = []) throws -> [String: ArtworkOutcome] {
         try withLock {
             guard !hasPendingRecovery else { throw SwitchError("请先恢复 Steam 登录设置。") }
             let check = { try requireGameClosed(client.processes()) }
@@ -430,8 +485,17 @@ struct Switcher: Sendable {
                         outcomes[target] = .waitingForResources
                         continue
                     }
-                    let result = try SkyStrikerMod(resources: reuse, account: target)
-                        .update(selected, pack: pack, scope: scope, additionalPacks: additionalPacks, checkGameClosed: check)
+                    let mod = try SkyStrikerMod(resources: reuse, account: target)
+                    let result: SkyStrikerMod.Result
+                    if let scope {
+                        let choices = Dictionary(uniqueKeysWithValues: scope.map { ($0, selected[$0] ?? 0) })
+                        result = try applyArtworkEdit(ArtworkEdit(choices: choices,
+                            packs: (pack.map { [$0] } ?? []) + additionalPacks,
+                            performanceOptOut: performanceOptOut), in: reuse, source: source,
+                            account: target, mod: mod)
+                    } else {
+                        result = try mod.update(selected, pack: pack, additionalPacks: additionalPacks, checkGameClosed: check)
+                    }
                     outcomes[target] = .applied(preserved: result.preserved)
                 } catch {
                     outcomes[target] = .failed(error.localizedDescription)

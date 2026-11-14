@@ -10,7 +10,7 @@ struct SwitcherWorkspace: View {
             case .search: ("卡片搜索", "magnifyingglass")
             case .collections: ("异画合集", "rectangle.on.rectangle")
             case .royalFinish: ("动态镜碎", "sparkles")
-            case .summons: ("召唤动画", "play.rectangle")
+            case .summons: ("卡片演出", "play.rectangle")
             case .skyStriker: ("闪刀异画", "bolt")
             case .settings: ("设置", "gearshape")
             }
@@ -32,6 +32,17 @@ struct SwitcherWorkspace: View {
             sidebar
             Divider()
             content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .alert("同时应用异画演出？", isPresented: Binding(
+            get: { model.artworkConfirmation != nil },
+            set: { if !$0 { model.artworkConfirmation = nil } }
+        ), presenting: model.artworkConfirmation) { confirmation in
+            Button("应用异画和演出") { confirmation.apply(true) }
+                .keyboardShortcut(.defaultAction)
+            Button("仅应用异画") { confirmation.apply(false) }
+            Button("取消", role: .cancel) {}
+        } message: { confirmation in
+            Text(confirmation.message)
         }
     }
 

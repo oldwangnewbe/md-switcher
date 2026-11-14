@@ -35,10 +35,12 @@ internal sealed partial class MainWindow : Form
     private readonly Button preferences = Ui.Button("设置");
     private readonly Button artwork = Ui.Button("卡片搜索");
     private readonly Button artworkCollections = Ui.Button("异画合集");
+    private readonly Button performances = Ui.Button("卡片演出");
     private readonly Button accountPage = Ui.Button("账号切换");
     private readonly Panel content = new() { Dock = DockStyle.Fill };
     private readonly TableLayoutPanel accountContent;
     private ArtworkPage? cardPage;
+    private PerformancePage? performancePage;
     private Button? activePage;
     private bool busy;
 
@@ -75,6 +77,7 @@ internal sealed partial class MainWindow : Form
         preferences.Click += (_, _) => Execute(ShowSettings);
         artwork.Click += (_, _) => Execute(() => ShowArtwork(collections: false));
         artworkCollections.Click += (_, _) => Execute(() => ShowArtwork(collections: true));
+        performances.Click += (_, _) => Execute(ShowPerformances);
         royalFinish.Click += (_, _) => Execute(ShowRoyalFinish);
         accountPage.Click += (_, _) => Execute(() => Navigate(accountPage, accountContent));
         Activated += (_, _) => UpdateButtons();
@@ -95,7 +98,10 @@ internal sealed partial class MainWindow : Form
             new SteamSession(install, StateDirectory).Recover();
             RefreshInstall("Steam 登录设置已恢复。");
         });
-        FormClosing += (_, args) => { if (busy || cardPage?.Busy == true || royalPage?.Busy == true) args.Cancel = true; };
+        FormClosing += (_, args) =>
+        {
+            if (busy || cardPage?.Busy == true || royalPage?.Busy == true || performancePage?.Busy == true) args.Cancel = true;
+        };
         FormClosed += (_, _) => { royalTimer.Dispose(); ClearCardPage(); tips.Dispose(); };
         UpdateButtons();
     }
@@ -289,6 +295,27 @@ internal sealed partial class MainWindow : Form
         Navigate(pageButton, page);
     }
 
+    private void ShowPerformances()
+    {
+        if (activePage == performances && performancePage is not null) return;
+        if (install is null || proDirectory is null)
+            throw new InvalidOperationException("请先在设置中确认 Master Duel 和 MDPro3 的目录。");
+        var resource = CurrentResources ?? throw new InvalidOperationException("请先设置资源主账号。");
+        var source = GameResources.Cache(install, resource.MainFolder);
+        var account = accounts.SelectedItem as Account;
+        var folder = account is null ? null : FolderFor(account.Id);
+        var cache = folder is null || SharedCache.HasBackup(install, folder) ? null : GameResources.Cache(install, folder);
+        cardPage?.Dispose();
+        cardPage = null;
+        performancePage?.Dispose();
+        var page = new PerformancePage(new CardEngine(StateDirectory, proDirectory), source,
+            cache, account is null ? null : AccountLabel(account));
+        performancePage = page;
+        page.BusyChanged += UpdateButtons;
+        Navigate(performances, page);
+        _ = page.StartAsync();
+    }
+
     private void Navigate(Button button, Control page)
     {
         var old = content.Controls.Count > 0 ? content.Controls[0] : null;
@@ -297,7 +324,7 @@ internal sealed partial class MainWindow : Form
         if (old != page)
         {
             content.Controls.Clear();
-            if (old is not null && old != accountContent && old != cardPage && old != royalPage) old.Dispose();
+            if (old is not null && old != accountContent && old != cardPage && old != royalPage && old != performancePage) old.Dispose();
             content.Controls.Add(page);
         }
         if (activePage is not null) { activePage.BackColor = Ui.Rail; activePage.ForeColor = Ui.RailText; }
@@ -312,6 +339,8 @@ internal sealed partial class MainWindow : Form
     {
         cardPage?.Dispose();
         cardPage = null;
+        performancePage?.Dispose();
+        performancePage = null;
         royalPage?.Dispose();
         royalPage = null;
     }
@@ -331,9 +360,9 @@ internal sealed partial class MainWindow : Form
             && accounts.SelectedItem is Account { Remembered: true };
         recover.Visible = pending;
         recover.Enabled = !busy;
-        var editing = busy || cardPage?.Busy == true || royalPage?.Busy == true;
+        var editing = busy || cardPage?.Busy == true || royalPage?.Busy == true || performancePage?.Busy == true;
         accountPage.Enabled = preferences.Enabled = refresh.Enabled = accounts.Enabled = !editing;
-        artwork.Enabled = artworkCollections.Enabled = royalFinish.Enabled = !editing && !pending;
+        artwork.Enabled = artworkCollections.Enabled = royalFinish.Enabled = performances.Enabled = !editing && !pending;
         UpdateAccountDetails(editing);
         accounts.Redraw();
     }

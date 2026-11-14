@@ -322,7 +322,7 @@ enum CoreChecks {
         let journal = source.appendingPathComponent(".md-switcher-sky-striker.json")
         try JSONSerialization.data(withJSONObject: interrupted).write(to: journal)
         let previousEvents = client.events
-        try expectError("有未完成的召唤动画写入") {
+        try expectError("有未完成的演出写入") {
             try switcher.changeAccount(to: firstID, launchGame: true, knownResourceFolder: "aaaa1111")
         }
         try expect(client.events == previousEvents)
@@ -363,11 +363,11 @@ enum CoreChecks {
         files[SummonAnimation.gatePath] = ["original": original.base64EncodedString(), "replacements": [sha(first)]]
         legacy["files"] = files
         try JSONSerialization.data(withJSONObject: legacy).write(to: journal)
-        try expect(try switcher.removeAddedSummonAnimations() == 1)
+        try expect(try switcher.removeLegacySummonAnimations() == 1)
         try expect(try Data(contentsOf: trigger) == original)
         try expect(!fm.fileExists(atPath: addedURL.path))
         try expect(try mainMod.summonSelections().isEmpty)
-        try expect(try switcher.removeAddedSummonAnimations() == 0)
+        try expect(try switcher.removeLegacySummonAnimations() == 0)
         print("PASS removing legacy added cut-ins and restoring triggers without copying assets to other accounts")
     }
 
@@ -464,13 +464,16 @@ enum CoreChecks {
         let domain = "local.md-switcher.check.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: domain) else { throw SwitchError("Cannot create test defaults.") }
         defer { defaults.removePersistentDomain(forName: domain) }
-        let custom = ArtworkCollection(id: "custom", name: "收藏", choices: [15245: variant.id])
+        let custom = ArtworkCollection(id: "custom", name: "收藏", choices: [15245: variant.id, 16195: ArtworkCollection.cardOnly])
         var preset = ArtworkCollection.presets[1]
         preset.choices.removeValue(forKey: 15245)
         ArtworkCollection.save([preset, custom], to: defaults)
         try expect(ArtworkCollection.load(from: defaults).map(\.name) == ["闪刀姬", "烙印", "黑魔导", "收藏"])
         try expect(ArtworkCollection.load(from: defaults)[1] == preset)
         try expect(ArtworkCollection.load(from: defaults).last?.cards(in: catalog).first?.variant?.id == variant.id)
+        let members = ArtworkCollection.load(from: defaults).last?.cards(in: catalog) ?? []
+        try expect(members.filter(\.hasArtworkChoice).map(\.id) == [15245])
+        try expect(Set(members.compactMap(\.card).flatMap(\.royalCardIDs)) == [15245, 16195])
         print("PASS series search, alternate card names, artwork filtering, and collection persistence")
     }
 

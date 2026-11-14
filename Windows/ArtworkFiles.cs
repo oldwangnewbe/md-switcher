@@ -3,14 +3,15 @@ using System.Text.Json;
 
 namespace MDSwitcher;
 
-internal sealed record ArtworkChoice(Card Card, CardVariant? Variant);
+internal sealed record ArtworkChoice(Card Card, CardVariant? Variant, bool IncludePerformance = true);
 
 internal static class ArtworkFiles
 {
     private sealed record EditHistory(Dictionary<string, int> Variants);
     private sealed record Registration(string Gate, Dictionary<string, int> Cards);
-    private sealed record Change(string Asset, int Slot, string Before, string After);
-    private sealed record EditState(Registration? OverFrame = null, Change[]? Pending = null);
+    private sealed record Change(string Asset, int Slot, string? Before, string? After);
+    private sealed record EditState(Registration? OverFrame = null, Change[]? Pending = null,
+        Performance[]? Performances = null, Dictionary<string, string>? PerformanceFiles = null);
 
     public static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 
@@ -54,7 +55,10 @@ internal static class ArtworkFiles
         throw new IOException("当前卡图与游戏索引不匹配，可能已更新或被其他 Mod 修改。请先核对游戏资源。");
     }
 
-    public static void ApplySelection(string cache, ArtworkChoice[] choices, CardEngine engine, Action ensureGameClosed)
+    public static Performance[] AppliedPerformances(string cache) => ReadState(cache).Performances ?? [];
+
+    public static void ApplySelection(string cache, ArtworkChoice[] choices, CardEngine engine, Action ensureGameClosed,
+                                      Performance[]? performanceSelection = null)
     {
         ensureGameClosed();
         using var editLock = Lock(cache);
@@ -68,8 +72,10 @@ internal static class ArtworkFiles
         var paths = new HashSet<string>();
         var changes = new List<Change>();
         var updateGate = false;
+        var current = state.Performances ?? [];
+        var selected = current.ToDictionary(option => option.Slot);
 
-        foreach (var (card, variant) in choices)
+        foreach (var (card, variant, includePerformance) in choices)
         {
             if (card.Path is not string path || !paths.Add(path) || !index.TryGetValue(path, out var entry))
                 throw new IOException($"「{card.Name}」在该账号的游戏资源中不可用。");
@@ -87,6 +93,12 @@ internal static class ArtworkFiles
             {
                 throw new IOException($"「{card.Name}」{error.Message}", error);
             }
+            foreach (var option in current.Where(option => option.Cid == card.Cid &&
+                         (includePerformance || option.ArtworkID != variant?.Id)))
+                selected.Remove(option.Slot);
+            if (includePerformance && variant is not null)
+                foreach (var option in card.MatchingPerformances(variant.Id))
+                    selected[option.Slot] = option;
         }
 
         if (updateGate)
@@ -114,12 +126,49 @@ internal static class ArtworkFiles
             }
         }
 
-        var updated = new EditState(registered.Count == 0 ? null : new Registration(gate!, registered));
+        if (performanceSelection is not null)
+            selected = performanceSelection.ToDictionary(option => option.Slot);
+        var next = selected.Values.OrderBy(option => option.Cid).ThenBy(option => option.ActivationStyle).ToArray();
+        var performanceFiles = state.PerformanceFiles ?? [];
+        var editPerformance = !current.ToHashSet().SetEquals(next);
+        if (editPerformance)
+        {
+            var patches = next.Length == 0 ? [] : engine.MakePerformancePack(cache, next, index, performanceFiles.Keys);
+            var desired = patches.ToDictionary(patch => patch.Path);
+            // Restore removed triggers before their catalog, then publish new files before their trigger.
+            var order = performanceFiles.Keys.Union(desired.Keys).Where(path => path != Performance.Catalog && path != Performance.Trigger)
+                .Order(StringComparer.Ordinal).ToList();
+            if (desired.ContainsKey(Performance.Catalog)) order.Add(Performance.Catalog);
+            else if (performanceFiles.ContainsKey(Performance.Catalog)) order.Insert(0, Performance.Catalog);
+            if (desired.ContainsKey(Performance.Trigger)) order.Add(Performance.Trigger);
+            else if (performanceFiles.ContainsKey(Performance.Trigger)) order.Insert(0, Performance.Trigger);
+            foreach (var path in order)
+            {
+                if (paths.Contains(path) || path == gate) throw new InvalidDataException("卡图与演出资源路径冲突。");
+                var patch = desired.GetValueOrDefault(path);
+                if (index.TryGetValue(path, out var entry))
+                {
+                    Stage(entry, patch is null ? null : 0, original => patch?.Data ?? original);
+                }
+                else
+                {
+                    var asset = GameResources.AssetPath(cache, path);
+                    var before = File.Exists(asset) ? File.ReadAllBytes(asset) : null;
+                    if (before is not null && performanceFiles.GetValueOrDefault(path) != Hash(before))
+                        throw new IOException("新增召唤演出的文件已被其他程序修改。");
+                    StageBytes(path, before, patch?.Data);
+                }
+            }
+            performanceFiles = patches.ToDictionary(patch => patch.Path, patch => Hash(patch.Data));
+            changes = [.. changes.Where(change => change.After is not null), .. changes.Where(change => change.After is null)];
+        }
+        var updated = new EditState(registered.Count == 0 ? null : new Registration(gate!, registered),
+            Performances: next, PerformanceFiles: performanceFiles);
         ensureGameClosed();
         if (HashFile(indexFile) != indexHash) throw new IOException("游戏资源索引刚刚更新，请重新打开卡片搜索。");
         if (changes.Count == 0)
         {
-            if (updateGate) WriteState(cache, updated);
+            if (updateGate || editPerformance) WriteState(cache, updated);
             return;
         }
         state = state with { Pending = changes.ToArray() };
@@ -159,9 +208,16 @@ internal static class ArtworkFiles
                 history.Variants[afterHash] = variant;
                 SteamSession.AtomicWrite(StatePath(cache, entry, ".json"), JsonSerializer.Serialize(history));
             }
-            var change = new Change(entry.Name, changes.Count, beforeHash, afterHash);
-            SteamSession.AtomicWrite(Staged(cache, change, before: true), before);
-            SteamSession.AtomicWrite(Staged(cache, change, before: false), after);
+            StageBytes(entry.Name, before, after);
+        }
+
+        void StageBytes(string asset, byte[]? before, byte[]? after)
+        {
+            var change = new Change(asset, changes.Count, before is null ? null : Hash(before),
+                after is null ? null : Hash(after));
+            if (change.Before == change.After) return;
+            if (before is not null) SteamSession.AtomicWrite(Staged(cache, change, before: true), before);
+            if (after is not null) SteamSession.AtomicWrite(Staged(cache, change, before: false), after);
             changes.Add(change);
         }
     }
@@ -203,11 +259,17 @@ internal static class ArtworkFiles
     {
         ensureGameClosed();
         var asset = GameResources.AssetPath(cache, change.Asset);
-        var hash = HashFile(asset);
+        var hash = File.Exists(asset) ? HashFile(asset) : null;
         var expected = rollback ? change.After : change.Before;
         var desired = rollback ? change.Before : change.After;
         if (hash == desired) return;
         if (hash != expected) throw new IOException("游戏资源已被其他程序修改。");
+        if (desired is null)
+        {
+            ensureGameClosed();
+            File.Delete(asset);
+            return;
+        }
         var bytes = File.ReadAllBytes(Staged(cache, change, before: rollback));
         if (Hash(bytes) != desired) throw new IOException("异画暂存文件未通过校验。");
         ensureGameClosed();

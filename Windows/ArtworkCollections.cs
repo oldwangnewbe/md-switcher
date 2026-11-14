@@ -4,6 +4,7 @@ namespace MDSwitcher;
 
 internal sealed record ArtworkCollection(string Id, string Name, Dictionary<int, int> Choices)
 {
+    public const int CardOnly = 0;
     public override string ToString() => Name;
 
     public static ArtworkCollection[] Load(string file)
@@ -30,7 +31,7 @@ internal sealed record ArtworkCollection(string Id, string Name, Dictionary<int,
         var saved = JsonSerializer.Deserialize<ArtworkCollection[]>(File.ReadAllText(file));
         if (saved is null || saved.Any(item => item is null || string.IsNullOrWhiteSpace(item.Id) ||
                 string.IsNullOrWhiteSpace(item.Name) || item.Choices is null ||
-                item.Choices.Any(pair => pair.Key <= 0 || pair.Value <= 0)) ||
+                item.Choices.Any(pair => pair.Key <= 0 || pair.Value < 0)) ||
             saved.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != saved.Length)
             throw new InvalidDataException("异画合集配置格式异常。");
         return presets.Select(preset => saved.FirstOrDefault(item => item.Id == preset.Id) ?? preset)

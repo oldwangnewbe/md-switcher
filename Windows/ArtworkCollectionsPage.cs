@@ -30,8 +30,8 @@ internal sealed partial class ArtworkPage
         saveChoice.Click += (_, _) => EditCollections(() =>
         {
             if (SelectedCollection is { } set && results.SelectedItem is Card { Cid: int cid } &&
-                options.SelectedItem is Option { Variant: { CanApply: true } variant })
-                SaveChoice(set, cid, variant.Id);
+                options.SelectedItem is Option option)
+                SaveChoice(set, cid, option.Variant?.Id ?? ArtworkCollection.CardOnly);
         });
         removeChoice.Click += (_, _) => EditCollections(() =>
         {
@@ -71,6 +71,7 @@ internal sealed partial class ArtworkPage
         var edits = new List<ArtworkChoice>();
         foreach (var (cid, id) in set.Choices)
         {
+            if (id == ArtworkCollection.CardOnly) continue;
             if (!byCid.TryGetValue(cid, out var card) || card.Path is null) return null;
             var variant = restore ? null : card.Variants.FirstOrDefault(variant => variant.Id == id && variant.CanApply);
             if (!restore && variant is null) return null;
@@ -81,12 +82,14 @@ internal sealed partial class ArtworkPage
 
     private void ShowCollectionMenu()
     {
-        if (results.SelectedItem is not Card { Cid: int cid } ||
-            options.SelectedItem is not Option { Variant: { CanApply: true } variant }) return;
+        if (results.SelectedItem is not Card { Cid: int cid }) return;
+        var chosen = (options.SelectedItem as Option)?.Variant;
+        var variant = chosen is { CanApply: true } ? chosen.Id : (int?)null;
         var menu = new ChoiceMenu(addToCollection);
         foreach (var set in collections)
-            menu.Add(set.Name, () => EditCollections(() => SaveChoice(set, cid, variant.Id)));
-        menu.Add("新建合集…", () => EditCollections(() => CreateCollection(cid, variant.Id)));
+            menu.Add(set.Name, () => EditCollections(() => SaveChoice(set, cid,
+                variant ?? set.Choices.GetValueOrDefault(cid, ArtworkCollection.CardOnly))));
+        menu.Add("新建合集…", () => EditCollections(() => CreateCollection(cid, variant ?? ArtworkCollection.CardOnly)));
         menu.ShowBelow();
     }
 
@@ -121,7 +124,7 @@ internal sealed partial class ArtworkPage
         if (cid is int key && variant is int id) choices.Add(key, id);
         var added = new ArtworkCollection(Guid.NewGuid().ToString("N"), name, choices);
         SaveCollections([.. collections, added], added.Id);
-        notice.Text = $"已新建「{name}」{(choices.Count == 0 ? "。" : "并加入所选异画。")}";
+        notice.Text = $"已新建「{name}」{(choices.Count == 0 ? "。" : "并加入所选卡片。")}";
     }
 
     private void SaveChoice(ArtworkCollection set, int cid, int? variant)

@@ -43,9 +43,9 @@ internal sealed partial class MainWindow
         }
         sidebar.Controls.Add(brand, 0, 1);
         sidebar.Controls.Add(edition, 0, 2);
-        var links = Ui.Stack(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize);
+        var links = Ui.Stack(SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize);
         links.AutoSize = true;
-        var navigation = new[] { accountPage, artwork, preferences, artworkCollections, royalFinish };
+        var navigation = new[] { accountPage, artwork, preferences, artworkCollections, royalFinish, performances };
         for (var i = 0; i < navigation.Length; i++)
         {
             var button = (RoundedButton)navigation[i];
@@ -63,6 +63,7 @@ internal sealed partial class MainWindow
         links.Controls.Add(artwork, 0, 1);
         links.Controls.Add(artworkCollections, 0, 2);
         links.Controls.Add(royalFinish, 0, 3);
+        links.Controls.Add(performances, 0, 4);
         sidebar.Controls.Add(links, 0, 3);
         sidebar.Controls.Add(preferences, 0, 5);
         var version = Ui.Label($"v{typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}");

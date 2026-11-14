@@ -13,16 +13,19 @@ internal sealed record CardVariant(int Id, string File, OverFrameSource? OverFra
 }
 internal sealed record Card(string Id, int? Cid, string? MasterName, string? ProName, int[] Codes,
                             int[] MasterIDs, CardVariant[] Variants, string? Path, string[] Series,
-                            string? PreviewFile = null, string? OriginalPreviewPath = null)
+                            string? PreviewFile = null, string? OriginalPreviewPath = null, int? OriginalArtworkID = null,
+                            Performance[]? Performances = null)
 {
     public string Name => MasterName ?? ProName ?? Id;
     public bool Replaceable => Cid.HasValue && Path is not null && Variants.Any(variant => variant.CanApply);
+    public Performance[] MatchingPerformances(int artworkId) =>
+        (Performances ?? []).Where(option => option.ArtworkID == artworkId).ToArray();
 }
 
 internal sealed partial class CardEngine(string state, string pro)
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
-    private const string CacheVersion = "win-card-3";
+    private const string CacheVersion = "win-card-4";
     private static readonly string EnginePath = Path.Combine(AppContext.BaseDirectory, "CardEngine");
     private sealed record SavedIndex(string Fingerprint, Card[] Cards);
     private sealed record GeneratedPatch(string Path, string OriginalSHA256, ArtworkInput SourceArtwork,
@@ -48,7 +51,20 @@ internal sealed partial class CardEngine(string state, string pro)
         return InWorkspace(work =>
         {
             var output = Path.Combine(work, "cards.json");
-            Run(work, "index", cache, pro, output, "--over-frame");
+            var indexEntries = GameResources.ReadIndex(cache).Items.ToDictionary(item => item.Name);
+            var metadata = new[] { Performance.Catalog, Performance.Trigger };
+            string[] args = ["index", cache, pro, output, "--over-frame"];
+            if (metadata.All(path => indexEntries.ContainsKey(path) && File.Exists(GameResources.AssetPath(cache, path))))
+            {
+                var originals = metadata.Select(path =>
+                {
+                    var file = Path.Combine(work, path[3..]);
+                    File.WriteAllBytes(file, ArtworkFiles.ReadOriginal(cache, indexEntries[path]));
+                    return file;
+                }).ToArray();
+                args = [.. args, "--performance-metadata", .. originals];
+            }
+            Run(work, args);
             var cards = JsonSerializer.Deserialize<Card[]>(File.ReadAllText(output), Json)
                 ?? throw new InvalidDataException("无法读取卡片索引。");
             if (cards.Length == 0 || Fingerprint(cache) != fingerprint)
@@ -141,6 +157,53 @@ internal sealed partial class CardEngine(string state, string pro)
         return result;
     });
 
+    private sealed record PerformanceAsset(string Path, string? OriginalSHA256, PatchedVariant[] Variants);
+    internal sealed record PerformancePatch(string Path, string? OriginalSHA256, byte[] Data);
+
+    public PerformancePatch[] MakePerformancePack(string cache, Performance[] selected,
+        IReadOnlyDictionary<string, GameResources.Entry> index, IEnumerable<string> previousPaths) => InWorkspace(work =>
+    {
+        var originals = Path.Combine(work, "originals");
+        var output = Path.Combine(work, "pack");
+        Directory.CreateDirectory(originals);
+        Directory.CreateDirectory(output);
+        var targets = selected.Where(option => !option.AddsSummon).SelectMany(option => option.Paths()).ToHashSet();
+        targets.Add(Performance.Catalog);
+        if (selected.Any(option => option.AddsSummon)) targets.Add(Performance.Trigger);
+        var inputs = targets.Union(previousPaths.Where(index.ContainsKey)).ToHashSet();
+        if (selected.Any(option => option.Donor is null))
+            inputs.UnionWith(Performance.SummonPaths(13668));
+        foreach (var path in inputs)
+        {
+            if (!index.TryGetValue(path, out var entry))
+                throw new IOException("当前账号缺少演出资源，请先完成游戏内下载。");
+            File.WriteAllBytes(Path.Combine(originals, path[3..]), ArtworkFiles.ReadOriginal(cache, entry));
+        }
+        Run(work, ["summon", cache, originals, output, pro, .. selected.OrderBy(option => option.Cid).Select(option => option.Spec)]);
+        var manifest = JsonSerializer.Deserialize<PerformanceAsset[]>(File.ReadAllText(Path.Combine(output, "manifest.json")), Json)
+            ?? throw new InvalidDataException("无法读取演出包。");
+        var paths = new HashSet<string>();
+        var patches = new List<PerformancePatch>();
+        foreach (var asset in manifest)
+        {
+            _ = GameResources.AssetPath(cache, asset.Path);
+            if (!paths.Add(asset.Path) || asset.Variants is not [var variant] ||
+                index.ContainsKey(asset.Path) != targets.Contains(asset.Path) ||
+                (asset.OriginalSHA256 is not null) != targets.Contains(asset.Path))
+                throw new InvalidDataException("演出包的资源路径或备份范围不匹配。");
+            if (asset.OriginalSHA256 is string digest && !digest.Equals(index[asset.Path].Hash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("演出包的原始资源校验失败。");
+            var bytes = File.ReadAllBytes(Path.Combine(output, $"{variant.Id}.bundle"));
+            if (!ArtworkFiles.Hash(bytes).Equals(variant.Sha256, StringComparison.OrdinalIgnoreCase) ||
+                (asset.Path != Performance.Catalog && !bytes.AsSpan().StartsWith("UnityFS\0"u8)))
+                throw new InvalidDataException("演出资源未通过校验。");
+            patches.Add(new(asset.Path, asset.OriginalSHA256, bytes));
+        }
+        if (!paths.IsSupersetOf(targets.Concat(selected.Where(option => option.AddsSummon).SelectMany(option => option.Paths()))))
+            throw new InvalidDataException("演出包缺少必要资源。");
+        return patches.ToArray();
+    });
+
     private string Fingerprint(string cache)
     {
         if (!Installation.IsMDPro3(pro)) throw new IOException("MDPro3 目录已移动，请在设置里重新选择。");
@@ -174,6 +237,13 @@ internal sealed partial class CardEngine(string state, string pro)
             foreach (var file in Directory.EnumerateFiles(folder).Select(Path.GetFileName).Order(StringComparer.Ordinal))
                 if (file is not null && file.Length == 8 && file.StartsWith(name, StringComparison.Ordinal)) Add(file);
         }
+        var cutins = Path.Combine(pro, "MDPro3_Data", "StandaloneWindows64", "MonsterCutin2");
+        if (Directory.Exists(cutins))
+            foreach (var file in Directory.EnumerateFiles(cutins).Order(StringComparer.Ordinal))
+            {
+                var info = new FileInfo(file);
+                if (int.TryParse(info.Name, out _)) Add($"{info.Name}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
+            }
         return Convert.ToHexString(hash.GetHashAndReset());
 
         void Add(string value) => hash.AppendData(Encoding.UTF8.GetBytes(value + "\0"));

@@ -68,6 +68,13 @@ struct ArtworkEdit {
     // A zero value requests the original art for that path. Other paths stay out of scope.
     let choices: [String: Int]
     let packs: [SkyStrikerPack]
+    let performanceOptOut: Set<String>
+
+    init(choices: [String: Int], packs: [SkyStrikerPack], performanceOptOut: Set<String> = []) {
+        self.choices = choices
+        self.packs = packs
+        self.performanceOptOut = performanceOptOut
+    }
 
     var scope: Set<String> { Set(choices.keys) }
     var selections: [String: Int] { choices.filter { $0.value > 0 } }
@@ -94,6 +101,9 @@ struct SkyStrikerMod {
         var files: [String: Entry] = [:]
         var pendingSummonAnimation: Bool?
         var summonChoices: Set<Int>?
+        var performances: Set<SummonAnimation>?
+        var performancePaths: Set<String>?
+        var registeredSummons: Bool?
         var overFrames: OverFrames?
         var pendingOverFramePaths: Set<String>?
     }
@@ -125,7 +135,7 @@ struct SkyStrikerMod {
             throw SwitchError("有未完成的超框写入。退出游戏后请重新应用或恢复同一组卡图。")
         }
         if state.pendingSummonAnimation == true {
-            throw SwitchError("有未完成的召唤动画写入。请在「召唤动画」里恢复原演出后再启动。")
+            throw SwitchError("有未完成的演出写入。请在「卡片演出」里恢复原演出后再启动。")
         }
     }
 
@@ -135,18 +145,31 @@ struct SkyStrikerMod {
         Set(try state().files.filter { $0.value.original == nil }.keys)
     }
 
-    func hasAddedSummonTriggers() throws -> Bool {
-        try state().files[SummonAnimation.gatePath] != nil
+    func hasLegacySummonTriggers() throws -> Bool {
+        let current = try state()
+        return current.files[SummonAnimation.gatePath] != nil && current.registeredSummons != true
     }
 
-    func summonSelections() throws -> Set<SummonAnimation> {
+    func summonSelections(catalog: [SummonAnimation] = []) throws -> Set<SummonAnimation> {
         let current = try state()
+        if let performances = current.performances {
+            return Set(performances.map { saved in catalog.first { $0.id == saved.id } ?? saved })
+        }
         if let saved = current.summonChoices {
-            return Set(SummonAnimation.all.filter { saved.contains($0.id) })
+            return Set(SummonAnimation.legacyOptions.filter {
+                saved.contains($0.artworkID) && (!$0.addsSummon || current.registeredSummons == true)
+            }.map { old in catalog.first { $0.id == old.id } ?? old })
         }
         return Set([SummonAnimation.kagari, .shizuku].filter { card in
             card.paths.allSatisfy { current.selections[$0] != nil }
         })
+    }
+
+    func summonScope() throws -> Set<String> {
+        let current = try state()
+        return SummonAnimation.scope.union(current.performancePaths ?? []).union(
+            current.files.compactMap { $0.value.original == nil ? $0.key : nil }
+        )
     }
 
     func originalAsset(path: String, size: Int, sha256: String) throws -> Data {
@@ -154,8 +177,7 @@ struct SkyStrikerMod {
         if let backup = try state().files[path]?.original, backup.count == size, artworkDigest(backup) == sha256 {
             return backup
         }
-        let limit = SummonAnimation.scope.contains(path) ? 24 * 1024 * 1024 : nil
-        if let live = try readFile(url, maxBytes: limit), live.count == size, artworkDigest(live) == sha256 {
+        if let live = try readFile(url, maxBytes: size), live.count == size, artworkDigest(live) == sha256 {
             return live
         }
         throw SwitchError("原版卡图与游戏索引不匹配，请先确认主账号的游戏资源版本。")
@@ -164,6 +186,7 @@ struct SkyStrikerMod {
     func update(_ selected: [String: Int], pack: SkyStrikerPack?,
                 scope: Set<String>? = nil, additionalPacks: [SkyStrikerPack] = [],
                 newSummonPaths: Set<String> = [], summonChoices: Set<Int>? = nil,
+                performances: Set<SummonAnimation>? = nil, performancePaths: Set<String>? = nil,
                 editOverFrameGate: ((Data, Set<Int>) throws -> Data)? = nil,
                 checkGameClosed: () throws -> Void) throws -> Result {
         let current = try state()
@@ -183,24 +206,33 @@ struct SkyStrikerMod {
         var overFrameScope = current.pendingOverFramePaths ?? []
         let packs = pack.map { [$0] + additionalPacks } ?? additionalPacks
         let catalog = SummonAnimation.catalogPath
+        let gate = SummonAnimation.gatePath
         let editingSummons = paths.contains(catalog)
+        guard selected[gate] == nil || (editingSummons && selected[catalog] != nil) else {
+            throw SwitchError("新增召唤演出缺少资源目录。")
+        }
         if editingSummons {
             pending.pendingSummonAnimation = true
             desired.pendingSummonAnimation = nil
             desired.summonChoices = summonChoices
+            desired.performances = performances
+            desired.performancePaths = performancePaths
+            if let performancePaths {
+                pending.performancePaths = (current.performancePaths ?? []).union(performancePaths)
+            }
+            desired.registeredSummons = selected[gate] == nil ? nil : true
+            if selected[gate] != nil { pending.registeredSummons = true }
         }
-        let gate = SummonAnimation.gatePath
         let orderedPaths = paths.subtracting([catalog, gate]).filter { $0 != overFrameGate }.sorted()
         if let overFrameGate, selected[overFrameGate] != nil {
             throw SwitchError("超框登记须随卡图一起更新。")
         }
-        // Publish new dependencies after their prefabs. On full restore disable the
-        // redirection before putting the original prefabs back.
-        let gatePaths = paths.contains(gate) ? [gate] : []
-        guard selected[gate] == nil else { throw SwitchError("当前仅支持替换原有的召唤演出。") }
-        let pathOrder = if !editingSummons { gatePaths + orderedPaths }
-            else if selected[catalog] == nil { gatePaths + [catalog] + orderedPaths }
-            else { gatePaths + orderedPaths + [catalog] }
+        // Write new bundles and their catalog before enabling new triggers.
+        // On removal, restore triggers before dropping their catalog entries.
+        let retiringGate = paths.contains(gate) && selected[gate] == nil ? [gate] : []
+        let pathOrder = if !editingSummons { retiringGate + orderedPaths }
+            else if selected[catalog] == nil { retiringGate + [catalog] + orderedPaths }
+            else { retiringGate + orderedPaths + [catalog] + (selected[gate] == nil ? [] : [gate]) }
         for path in pathOrder {
             let previous = current.files[path]
             let id = selected[path]
@@ -219,8 +251,8 @@ struct SkyStrikerMod {
             let beforeHash = before.map(artworkDigest)
             if let previous, let beforeHash, beforeHash != previous.original.map(artworkDigest),
                !previous.replacements.contains(beforeHash) {
-                if path == gate {
-                    throw SwitchError("召唤触发配置已被游戏或其他 Mod 更新，无法安全移除旧演出。")
+                if path == gate || path == catalog {
+                    throw SwitchError("演出登记已被游戏或其他 Mod 更新，请核对游戏资源。")
                 }
                 guard id == nil else {
                     throw SwitchError("卡图已被游戏更新或其他 Mod 改动。请先恢复，再检查当前版本。")

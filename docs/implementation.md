@@ -2,7 +2,7 @@
 
 - **账号与启动**：macOS 通过 CrossOver 的 Wine 操作目标容器，Windows 直接使用本机 Steam。两端读取 Steam 的 `loginusers.vdf`，换号时备份并更新登录配置，核对 Steam 实际登录账号后用 App ID `1449850` 启动。密码和 Steam Guard 由 Steam 处理。
 - **资源复用**：macOS 使用 APFS 克隆。Windows 可在同一 NTFS 卷上用目录联接共享 `0000` 缓存，也可保留独立缓存，用 NTFS 硬链接或受支持的 ReFS 块克隆补齐原版资源。操作前核对资源路径、版本和游戏进程状态。详见 [Windows 资源说明](../Windows/README.md)。
-- **卡图与召唤动画**：通过 MDPro3 本机安装中的卡库、卡片编号映射、`Picture/Art`、`Picture/OverFrame` 和动画素材匹配大师决斗资源。以 UnityPy、Pillow 等处理贴图和 Unity 资源包，校验原始文件与生成结果，保留恢复所需的原件。动画替换用于游戏已有的召唤演出。公开源码和 DMG 不附带 MDPro3 或游戏卡图、动画、游戏资源包，也不分发 Steam 账号或本机存档。
+- **卡图与卡片演出**：通过 MDPro3 本机安装中的卡库、卡片编号映射、`Picture/Art`、`Picture/OverFrame` 和演出素材匹配大师决斗资源。以 UnityPy、Pillow 等处理贴图和 Unity 资源包，校验原始文件与生成结果，保留恢复所需的原件。支持替换已有的召唤或发动演出，以及为有可用素材的卡新增召唤演出。公开源码和安装包不附带 MDPro3 或游戏卡图、演出、游戏资源包，也不分发 Steam 账号或本机存档。
 - **动态镜碎**：工具读取 Steam 的游戏启动日志并核对当前账号和游戏进程。两端共用 Windows 原生加载器，把渲染 DLL 加载到 `masterduel.exe`，用 MinHook 接入 IL2CPP 卡面渲染方法，为所选卡使用游戏原生镜碎材质。效果仅在本机进程显示，账号实际持有的卡片品质由游戏服务器记录。
 - **桌面集成**：使用 macOS `SMAppService` 注册登录项，用系统热键接口注册 `Control + Option + M`。依赖的第三方许可随组件和 Python 依赖包保留。
 
