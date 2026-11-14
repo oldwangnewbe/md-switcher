@@ -157,7 +157,8 @@ internal sealed partial class CardEngine(string state, string pro)
         return result;
     });
 
-    private sealed record PerformanceAsset(string Path, string? OriginalSHA256, PatchedVariant[] Variants);
+    private sealed record PerformanceBundle(uint Id, string Sha256);
+    private sealed record PerformanceAsset(string Path, string? OriginalSHA256, PerformanceBundle[] Variants);
     internal sealed record PerformancePatch(string Path, string? OriginalSHA256, byte[] Data);
 
     public PerformancePatch[] MakePerformancePack(string cache, Performance[] selected,
@@ -193,6 +194,8 @@ internal sealed partial class CardEngine(string state, string pro)
                 throw new InvalidDataException("演出包的资源路径或备份范围不匹配。");
             if (asset.OriginalSHA256 is string digest && !digest.Equals(index[asset.Path].Hash, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("演出包的原始资源校验失败。");
+            if (variant.Id != Convert.ToUInt32(asset.Path[3..], 16))
+                throw new InvalidDataException("演出包的资源编号与文件路径不匹配。");
             var bytes = File.ReadAllBytes(Path.Combine(output, $"{variant.Id}.bundle"));
             if (!ArtworkFiles.Hash(bytes).Equals(variant.Sha256, StringComparison.OrdinalIgnoreCase) ||
                 (asset.Path != Performance.Catalog && !bytes.AsSpan().StartsWith("UnityFS\0"u8)))
