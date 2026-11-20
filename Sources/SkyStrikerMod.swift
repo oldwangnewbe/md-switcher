@@ -129,6 +129,44 @@ struct SkyStrikerMod {
 
     func selections() throws -> [String: Int] { try state().selections }
 
+    @discardableResult
+    func repairOverFrameRegistration(edit: (Data, Set<Int>) throws -> Data,
+                                     checkGameClosed: () throws -> Void) throws -> Bool {
+        var current = try state()
+        guard let registration = current.overFrames, current.pendingOverFramePaths == nil,
+              let previous = current.files[registration.gate] else { return false }
+        let url = try assetURL(registration.gate, allowMissingFolder: true)
+        guard let before = try readFile(url), !previous.replacements.contains(artworkDigest(before)) else {
+            return false
+        }
+        let resources = ResourceReuse(root: account.deletingLastPathComponent())
+        let index = try resources.catalog(cache)
+        let entries = Dictionary(uniqueKeysWithValues: index.informations.map { ($0.assetName, $0) })
+        guard let gate = entries[registration.gate], before.count == gate.bytes,
+              artworkDigest(before) == gate.crc else { return false }
+        var installed = Set<Int>()
+        for (path, cid) in registration.cards {
+            guard current.selections[path] != nil, let entry = entries[path], let saved = current.files[path],
+                  let original = saved.original, original.count == entry.bytes, artworkDigest(original) == entry.crc,
+                  let live = try readFile(assetURL(path, allowMissingFolder: true)),
+                  saved.replacements.contains(artworkDigest(live)) else { continue }
+            installed.insert(cid)
+        }
+        guard !installed.isEmpty else { return false }
+        let after = try edit(before, installed)
+        try checkGameClosed()
+        guard try readFile(url) == before, try resources.catalog(cache).informations == index.informations else {
+            throw SwitchError("游戏资源刚刚发生变化，请在下载完成后重试。")
+        }
+        // Save the new original first so an interruption leaves either a verified mod or a retryable original.
+        current.files[registration.gate] = Entry(original: before, replacements: [artworkDigest(after)])
+        try save(current)
+        try checkGameClosed()
+        guard try readFile(url) == before else { throw SwitchError("超框登记刚刚发生变化。") }
+        if after != before { try write(after, to: url) }
+        return after != before
+    }
+
     func requireSummonReady() throws {
         let state = try state()
         if state.pendingOverFramePaths != nil {
@@ -329,7 +367,7 @@ struct SkyStrikerMod {
             desired.files[overFrameGate] = overFrameCards.isEmpty ? nil : Entry(original: original, replacements: [hash])
             desired.overFrames = overFrameCards.isEmpty ? nil : OverFrames(gate: overFrameGate, cards: overFrameCards)
             desired.pendingOverFramePaths = nil
-            var backup = previous ?? Entry(original: original, replacements: [])
+            var backup = Entry(original: original, replacements: previous?.replacements ?? [])
             backup.replacements.insert(hash)
             pending.files[overFrameGate] = backup
             pending.overFrames = OverFrames(gate: overFrameGate,

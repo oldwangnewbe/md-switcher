@@ -107,6 +107,7 @@ internal sealed partial class SteamSession(Installation install, string state)
         }
 
         RequireGameClosed();
+        string? artworkCache = null;
         if (resources is not null)
         {
             var folder = resources.MainAccount == account.Id ? resources.MainFolder : resources.Accounts.GetValueOrDefault(account.Id);
@@ -116,6 +117,7 @@ internal sealed partial class SteamSession(Installation install, string state)
                 var main = GameResources.CacheLocation(install, resources.MainFolder);
                 if (account.Id == resources.MainAccount || SharedCache.IsLinkedTo(cache, main)) cache = main;
                 ArtworkFiles.RecoverPending(cache, RequireGameClosed);
+                artworkCache = cache;
             }
         }
         if (resources is not null && resources.MainAccount != account.Id && resources.Accounts.ContainsKey(account.Id))
@@ -125,12 +127,26 @@ internal sealed partial class SteamSession(Installation install, string state)
                 () => ActiveAccount() == account.Id, progress));
             if (added > 0) progress.Report($"已为小号准备 {added} 个资源文件，正在启动游戏…");
         }
+        string? artworkWarning = null;
+        if (artworkCache is string target)
+        {
+            try
+            {
+                await Task.Run(() => ArtworkFiles.RepairOverFrameRegistration(
+                    target, new CardEngine(state, ""), RequireGameClosed));
+            }
+            catch (Exception error)
+            {
+                ArtworkFiles.RecoverPending(target, RequireGameClosed);
+                artworkWarning = $" 超框登记未修复。{error.Message}";
+            }
+        }
         if (Installation.Find(install.Steam, install.Game, strict: true) is null)
             throw new InvalidOperationException("Master Duel 的 Steam 安装位置已变化，请刷新安装目录。");
         if (ActiveAccount() != account.Id)
             throw new InvalidOperationException("Steam 登录账号已变化，请确认后重试。");
         Start("-applaunch", Installation.AppId);
-        progress.Report("已通过 Steam 请求启动 Master Duel。");
+        progress.Report("已通过 Steam 请求启动 Master Duel。" + artworkWarning);
     }
 
     public void Recover()

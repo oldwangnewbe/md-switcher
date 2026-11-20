@@ -429,14 +429,39 @@ enum CoreChecks {
         _ = try resources.prepare(target: "bbbb2222", source: "aaaa1111") {}
         for (path, data) in originals { try expect(try Data(contentsOf: target.appendingPathComponent(path)) == data) }
 
-        _ = try account.update([:], pack: nil, scope: [first], editOverFrameGate: registration) {}
+        let gateURL = cache.appendingPathComponent(gate)
+        let updatedGate = Data("official gate with new cards".utf8)
+        let updatedIndex = entries.map { entry -> [String: Any] in
+            guard entry["assetName"] as? String == gate else { return entry }
+            return ["assetName": gate, "version": "2", "bytes": updatedGate.count, "crc": artworkDigest(updatedGate)]
+        }
+        try write(JSONSerialization.data(withJSONObject: ["informations": updatedIndex]),
+                  to: cache.appendingPathComponent(ResourceReuse.indexPath))
+        try Data("third-party gate".utf8).write(to: gateURL)
+        try expect(try !account.repairOverFrameRegistration(edit: { _, _ in
+            throw SwitchError("Unexpected repair of an unrecognized bundle")
+        }, checkGameClosed: {}))
+        try updatedGate.write(to: gateURL)
+        func updatedRegistration(_ original: Data, _ ids: Set<Int>) throws -> Data {
+            try expect(original == updatedGate)
+            return original + Data(ids.sorted().map(String.init).joined(separator: ",").utf8)
+        }
+        try expect(try account.repairOverFrameRegistration(edit: updatedRegistration, checkGameClosed: {}))
+        try expect(try Data(contentsOf: gateURL) == updatedRegistration(updatedGate, [17034, 17069]))
+        try expect(try !account.repairOverFrameRegistration(edit: { _, _ in
+            throw SwitchError("Unexpected repeated repair")
+        }, checkGameClosed: {}))
+
+        _ = try account.update([:], pack: nil, scope: [first], editOverFrameGate: updatedRegistration) {}
         try expect(try Data(contentsOf: cache.appendingPathComponent(first)) == originals[first])
         try expect(try Data(contentsOf: cache.appendingPathComponent(second)) == tall)
-        try expect(try Data(contentsOf: cache.appendingPathComponent(gate)) == registration(originals[gate]!, [17069]))
+        try expect(try Data(contentsOf: gateURL) == updatedRegistration(updatedGate, [17069]))
         _ = try account.update([:], pack: nil) {}
-        for (path, data) in originals { try expect(try Data(contentsOf: cache.appendingPathComponent(path)) == data) }
+        for (path, data) in originals {
+            try expect(try Data(contentsOf: cache.appendingPathComponent(path)) == (path == gate ? updatedGate : data))
+        }
         try expect(try account.selections().isEmpty)
-        print("PASS over-frame upgrade, isolated resource reuse, and scoped restoration")
+        print("PASS over-frame upgrade, isolated resource reuse, repair after an official update, and scoped restoration")
     }
 
     private static func artworkCollections() throws {

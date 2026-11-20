@@ -3,7 +3,7 @@ import Foundation
 enum SwitchProgress {
     case checking, stopping, configuring, waitingForLogin, launchingGame, locatingResources
     case initializingResources, preparingResources, refreshingDisplay
-    case syncingGameLanguage, gameLanguageWarning(String), queuedArtworkApplied, artworkWarning(String)
+    case syncingGameLanguage, gameLanguageWarning(String), queuedArtworkApplied, overFrameRepaired, artworkWarning(String)
     case applyingRoyalFinish, royalFinishApplied, royalFinishWarning(String)
 
     var title: String {
@@ -20,6 +20,7 @@ enum SwitchProgress {
         case .syncingGameLanguage: "正在同步主账号的游戏语言…"
         case .gameLanguageWarning(let reason): reason
         case .queuedArtworkApplied: "已应用为此账号排队的闪刀卡图。"
+        case .overFrameRepaired: "已用当前游戏资源修复超框登记。"
         case .artworkWarning(let reason): reason
         case .applyingRoyalFinish: "正在为所选卡片加载动态镜碎…"
         case .royalFinishApplied: "动态镜碎已加载。"
@@ -97,9 +98,11 @@ struct Switcher: Sendable {
                 activeAccount = { try checkpoint.activeAccount() }
             }
             guard launchGame else { return nil }
+            var artworkFolder = knownResourceFolder
             if let resourceLaunch {
                 let folder = try prepareForLaunch(resourceLaunch, account: id, activeAccount: activeAccount,
                                                   record: recordResourceDirectory, report: report)
+                artworkFolder = folder
                 let resources = try resourceReuse()
                 _ = try removeLegacySummonAnimations(in: resources, account: folder)
                 try SkyStrikerMod(resources: resources, account: folder).requireSummonReady()
@@ -126,6 +129,20 @@ struct Switcher: Sendable {
                     } catch {
                         report(.artworkWarning("异画尚未应用。\(error.localizedDescription)"))
                     }
+                }
+            }
+            if let folder = artworkFolder, let resources,
+               (try? resources.accountDirectories().contains(folder)) == true {
+                do {
+                    let mod = try SkyStrikerMod(resources: resources, account: folder)
+                    let engine = CardSearchEngine(storage: storage)
+                    if try mod.repairOverFrameRegistration(edit: engine.rewriteOverFrameGate, checkGameClosed: {
+                        try requireGameClosed(verifiedProcesses(account: id, activeAccount: activeAccount))
+                    }) {
+                        report(.overFrameRepaired)
+                    }
+                } catch {
+                    report(.artworkWarning("超框登记未修复。\(error.localizedDescription)"))
                 }
             }
             report(.launchingGame)

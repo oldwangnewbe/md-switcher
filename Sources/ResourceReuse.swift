@@ -10,7 +10,7 @@ struct ResourceReuse {
 
     static let indexPath = "86/868ffd0e"
 
-    private struct Catalog: Decodable {
+    struct Catalog: Decodable {
         struct Entry: Decodable, Equatable {
             let assetName: String
             let version: String
@@ -278,7 +278,7 @@ struct ResourceReuse {
         root.appendingPathComponent(target).appendingPathComponent(".md-switcher-resource-backup")
     }
 
-    private func catalog(_ cache: URL) throws -> Catalog {
+    func catalog(_ cache: URL) throws -> Catalog {
         let file = cache.appendingPathComponent(Self.indexPath)
         guard FileManager.default.fileExists(atPath: file.path) else {
             return Catalog(informations: [])

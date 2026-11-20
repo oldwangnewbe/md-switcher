@@ -6,8 +6,8 @@
 
 | 平台 | 安装包 | 需要准备 |
 | --- | --- | --- |
-| Windows 10 / 11 x64 | [下载 ZIP](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.20/DuelShelf-Windows-x64-0.9.20.zip) | 安装 Steam 和《Master Duel》 |
-| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.20/DuelShelf-macOS-arm64-0.9.20.dmg) | 在同一个 CrossOver 容器里安装 Steam 和《Master Duel》 |
+| Windows 10 / 11 x64 | [下载 ZIP](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.21/DuelShelf-Windows-x64-0.9.21.zip) | 安装 Steam 和《Master Duel》 |
+| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.21/DuelShelf-macOS-arm64-0.9.21.dmg) | 在同一个 CrossOver 容器里安装 Steam 和《Master Duel》 |
 
 ## Windows 怎么用
 
@@ -44,6 +44,7 @@
 ## 异画、镜碎和卡片演出
 
 - **异画**：在「设置」连接本机 MDPro3。退出游戏后，从「卡片搜索」预览并应用普通或超框异画，或用「异画合集」批量应用、恢复原画。有对应演出的画款会提示是否一并应用。
+- 如果官方更新覆盖了超框登记表，下载完成后退出游戏，再用决斗匣的「启动 MD」启动。对贴图仍在的卡，决斗匣会用新版官方表补回超框登记。如果贴图也被更新覆盖，请重新应用对应异画。
 - **动态镜碎**：选中账号，在「动态镜碎」按卡片或合集开启。保持决斗匣运行，下次从决斗匣或 Steam 启动游戏时会自动加载。效果仅在本机显示。
 - **卡片演出**：在「卡片演出」按卡名或画款编号查找。可替换已有的召唤或发动演出，也可为符合条件的卡新增召唤演出。支持恢复原演出。
 

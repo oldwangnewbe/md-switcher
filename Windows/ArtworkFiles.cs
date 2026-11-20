@@ -57,8 +57,14 @@ internal static class ArtworkFiles
 
     public static Performance[] AppliedPerformances(string cache) => ReadState(cache).Performances ?? [];
 
+    public static void RepairOverFrameRegistration(string cache, CardEngine engine, Action ensureGameClosed)
+    {
+        if (ReadState(cache).OverFrame is not null)
+            ApplySelection(cache, [], engine, ensureGameClosed, repairOverFrame: true);
+    }
+
     public static void ApplySelection(string cache, ArtworkChoice[] choices, CardEngine engine, Action ensureGameClosed,
-                                      Performance[]? performanceSelection = null)
+                                      Performance[]? performanceSelection = null, bool repairOverFrame = false)
     {
         ensureGameClosed();
         using var editLock = Lock(cache);
@@ -74,6 +80,15 @@ internal static class ArtworkFiles
         var updateGate = false;
         var current = state.Performances ?? [];
         var selected = current.ToDictionary(option => option.Slot);
+        if (repairOverFrame)
+        {
+            if (gate is null || !index.TryGetValue(gate, out var entry))
+                return;
+            var asset = GameResources.AssetPath(cache, gate);
+            if (!File.Exists(asset) || !GameResources.Matches(asset, entry))
+                return;
+            updateGate = true;
+        }
 
         foreach (var (card, variant, includePerformance) in choices)
         {
