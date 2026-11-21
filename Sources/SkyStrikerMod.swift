@@ -210,6 +210,20 @@ struct SkyStrikerMod {
         )
     }
 
+    func summonResourcesNeedRepair() throws -> Bool {
+        let current = try state()
+        guard let paths = current.performancePaths, !paths.isEmpty else { return false }
+        let resources = ResourceReuse(root: account.deletingLastPathComponent())
+        let index = try resources.catalog(cache)
+        let entries = Dictionary(uniqueKeysWithValues: index.informations.map { ($0.assetName, $0) })
+        return try paths.contains { path in
+            guard let saved = current.files[path],
+                  let live = try readFile(assetURL(path, allowMissingFolder: true), maxBytes: 24 * 1024 * 1024),
+                  saved.replacements.contains(artworkDigest(live)) else { return true }
+            return saved.original.map(artworkDigest) != entries[path]?.crc
+        }
+    }
+
     func originalAsset(path: String, size: Int, sha256: String) throws -> Data {
         let url = try assetURL(path)
         if let backup = try state().files[path]?.original, backup.count == size, artworkDigest(backup) == sha256 {
@@ -246,6 +260,13 @@ struct SkyStrikerMod {
         let catalog = SummonAnimation.catalogPath
         let gate = SummonAnimation.gatePath
         let editingSummons = paths.contains(catalog)
+        let performanceIndex: [String: ResourceReuse.Catalog.Entry]
+        if editingSummons {
+            let resources = ResourceReuse(root: account.deletingLastPathComponent())
+            performanceIndex = Dictionary(uniqueKeysWithValues: try resources.catalog(cache).informations.map { ($0.assetName, $0) })
+        } else {
+            performanceIndex = [:]
+        }
         guard selected[gate] == nil || (editingSummons && selected[catalog] != nil) else {
             throw SwitchError("新增召唤演出缺少资源目录。")
         }
@@ -287,8 +308,13 @@ struct SkyStrikerMod {
                 throw SwitchError("所选账号缺少卡图资源，请先启动游戏完成资源准备。")
             }
             let beforeHash = before.map(artworkDigest)
+            let isPerformance = path == gate || path == catalog || current.performancePaths?.contains(path) == true
+            let official = isPerformance ? performanceIndex[path] : nil
+            let currentOriginal = official.flatMap { entry in
+                beforeHash == entry.crc && before?.count == entry.bytes ? before : nil
+            }
             if let previous, let beforeHash, beforeHash != previous.original.map(artworkDigest),
-               !previous.replacements.contains(beforeHash) {
+               !previous.replacements.contains(beforeHash), currentOriginal == nil {
                 if path == gate || path == catalog {
                     throw SwitchError("演出登记已被游戏或其他 Mod 更新，请核对游戏资源。")
                 }
@@ -301,7 +327,7 @@ struct SkyStrikerMod {
 
             let after: Data?
             if let id {
-                let original = previous == nil ? before : previous?.original
+                let original = currentOriginal ?? (previous == nil ? before : previous?.original)
                 let originalSHA256 = original.map(artworkDigest)
                 let matches = packs.lazy.compactMap { candidate -> (SkyStrikerPack, SkyStrikerPack.Card, SkyStrikerPack.Card.Variant)? in
                     guard let card = candidate.cards.first(where: { $0.path == path }),
@@ -328,11 +354,14 @@ struct SkyStrikerMod {
                 }
                 after = try pack.verifiedBundle(variant, for: card)
                 desired.files[path] = Entry(original: original, replacements: [variant.sha256])
-                var entry = previous ?? Entry(original: original, replacements: [])
+                var entry = Entry(original: original, replacements: previous?.replacements ?? [])
                 entry.replacements.insert(variant.sha256)
                 pending.files[path] = entry
             } else if let previous {
-                after = previous.original
+                if let official, currentOriginal == nil, previous.original.map(artworkDigest) != official.crc {
+                    throw SwitchError("演出资源与当前官方版本不匹配，请先完成游戏资源修复。")
+                }
+                after = currentOriginal ?? previous.original
             } else {
                 continue
             }

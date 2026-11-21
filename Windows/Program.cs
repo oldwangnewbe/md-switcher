@@ -203,7 +203,7 @@ internal sealed partial class MainWindow : Form
         try
         {
             var progress = new Progress<string>(message => status.Text = message);
-            await new SteamSession(install, StateDirectory).RunAsync(account, launch, progress, CurrentResources);
+            await new SteamSession(install, StateDirectory).RunAsync(account, launch, progress, CurrentResources, proDirectory);
         }
         catch (Exception error) { status.Text = error.Message; }
         finally { busy = false; UpdateButtons(); }

@@ -57,6 +57,30 @@ internal static class ArtworkFiles
 
     public static Performance[] AppliedPerformances(string cache) => ReadState(cache).Performances ?? [];
 
+    public static bool RepairPerformances(string cache, CardEngine engine, Action ensureGameClosed)
+    {
+        var state = ReadState(cache);
+        if (state.PerformanceFiles is not { Count: > 0 }) return true;
+        var index = GameResources.ReadIndex(cache).Items.ToDictionary(entry => entry.Name);
+        if (state.PerformanceFiles.All(file =>
+        {
+            var asset = GameResources.AssetPath(cache, file.Key);
+            if (!File.Exists(asset) || HashFile(asset) != file.Value) return false;
+            return !index.TryGetValue(file.Key, out var entry) || OriginalWhenModified(cache, entry) is not null;
+        })) return true;
+
+        try
+        {
+            ApplySelection(cache, [], engine, ensureGameClosed, state.Performances ?? [], rebuildPerformances: true);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or TimeoutException)
+        {
+            ApplySelection(cache, [], engine, ensureGameClosed, [], rebuildPerformances: true);
+            return false;
+        }
+    }
+
     public static void RepairOverFrameRegistration(string cache, CardEngine engine, Action ensureGameClosed)
     {
         if (ReadState(cache).OverFrame is not null)
@@ -64,7 +88,8 @@ internal static class ArtworkFiles
     }
 
     public static void ApplySelection(string cache, ArtworkChoice[] choices, CardEngine engine, Action ensureGameClosed,
-                                      Performance[]? performanceSelection = null, bool repairOverFrame = false)
+                                      Performance[]? performanceSelection = null, bool repairOverFrame = false,
+                                      bool rebuildPerformances = false)
     {
         ensureGameClosed();
         using var editLock = Lock(cache);
@@ -145,7 +170,7 @@ internal static class ArtworkFiles
             selected = performanceSelection.ToDictionary(option => option.Slot);
         var next = selected.Values.OrderBy(option => option.Cid).ThenBy(option => option.ActivationStyle).ToArray();
         var performanceFiles = state.PerformanceFiles ?? [];
-        var editPerformance = !current.ToHashSet().SetEquals(next);
+        var editPerformance = rebuildPerformances || !current.ToHashSet().SetEquals(next);
         if (editPerformance)
         {
             var patches = next.Length == 0 ? [] : engine.MakePerformancePack(cache, next, index, performanceFiles.Keys);

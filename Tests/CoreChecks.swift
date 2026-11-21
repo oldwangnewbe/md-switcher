@@ -369,6 +369,40 @@ enum CoreChecks {
         try expect(try mainMod.summonSelections().isEmpty)
         try expect(try switcher.removeLegacySummonAnimations() == 0)
         print("PASS removing legacy added cut-ins and restoring triggers without copying assets to other accounts")
+
+        let newCatalog = Data("new official performance catalog".utf8)
+        let currentFiles = [SummonAnimation.catalogPath: newCatalog, SummonAnimation.gatePath: original]
+        let updatedEntries = currentFiles.map { path, data in
+            ["assetName": path, "version": "2", "bytes": data.count, "crc": sha(data)] as [String: Any]
+        }
+        try JSONSerialization.data(withJSONObject: ["informations": updatedEntries]).write(to: mainIndex)
+        try newCatalog.write(to: dependencyCatalog)
+        try first.write(to: trigger)
+        try first.write(to: addedURL)
+        let raye = SummonAnimation(cid: 13670, artworkID: retiredArtworkID, name: "Raye", addsSummon: true)
+        let stale: [String: Any] = [
+            "registeredSummons": true, "performancePaths": Array(currentFiles.keys) + [addedPath],
+            "selections": [String: Int](),
+            "performances": try JSONSerialization.jsonObject(with: JSONEncoder().encode([raye])),
+            "files": [
+                SummonAnimation.catalogPath: ["original": originalCatalog.base64EncodedString(), "replacements": [sha(changedCatalog)]],
+                SummonAnimation.gatePath: ["original": original.base64EncodedString(), "replacements": [sha(first)]],
+                addedPath: ["replacements": [sha(first)]],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: stale).write(to: journal)
+        try expect(try mainMod.summonResourcesNeedRepair())
+        client.active = ["steam.exe"]
+        client.onActiveAccount = { firstID }
+        client.onGameLaunch = {
+            try expect(try Data(contentsOf: dependencyCatalog) == newCatalog)
+            try expect(try Data(contentsOf: trigger) == original)
+            try expect(!fm.fileExists(atPath: addedURL.path))
+        }
+        try switcher.changeAccount(to: firstID, launchGame: true, knownResourceFolder: "aaaa1111")
+        try expect(try mainMod.summonSelections().isEmpty)
+        try expect(try !mainMod.summonResourcesNeedRepair())
+        print("PASS an overwritten performance catalog falls back safely before launch when assets cannot be rebuilt")
     }
 
     private static func overFrameArtwork() throws {

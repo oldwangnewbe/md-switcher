@@ -50,7 +50,8 @@ internal sealed partial class SteamSession(Installation install, string state)
         return accounts.ToArray();
     }
 
-    public async Task RunAsync(Account account, bool launch, IProgress<string> progress, ResourceSettings? resources)
+    public async Task RunAsync(Account account, bool launch, IProgress<string> progress, ResourceSettings? resources,
+                               string? proDirectory = null)
     {
         if (CanRecover) throw new InvalidOperationException("请先恢复未完成的 Steam 登录设置。");
         var active = ActiveAccount();
@@ -130,16 +131,19 @@ internal sealed partial class SteamSession(Installation install, string state)
         string? artworkWarning = null;
         if (artworkCache is string target)
         {
+            var engine = new CardEngine(state, proDirectory ?? "");
             try
             {
                 await Task.Run(() => ArtworkFiles.RepairOverFrameRegistration(
-                    target, new CardEngine(state, ""), RequireGameClosed));
+                    target, engine, RequireGameClosed));
             }
             catch (Exception error)
             {
                 ArtworkFiles.RecoverPending(target, RequireGameClosed);
                 artworkWarning = $" 超框登记未修复。{error.Message}";
             }
+            if (!await Task.Run(() => ArtworkFiles.RepairPerformances(target, engine, RequireGameClosed)))
+                artworkWarning += " 游戏更新后部分演出资源无法重建，已恢复原演出。";
         }
         if (Installation.Find(install.Steam, install.Game, strict: true) is null)
             throw new InvalidOperationException("Master Duel 的 Steam 安装位置已变化，请刷新安装目录。");

@@ -144,6 +144,8 @@ struct Switcher: Sendable {
                 } catch {
                     report(.artworkWarning("超框登记未修复。\(error.localizedDescription)"))
                 }
+                try requireGameClosed(verifiedProcesses(account: id, activeAccount: activeAccount))
+                try repairSummonAnimations(in: resources, account: folder, report: report)
             }
             report(.launchingGame)
             try requireGameClosed(verifiedProcesses(account: id, activeAccount: activeAccount))
@@ -432,6 +434,20 @@ struct Switcher: Sendable {
         guard try mod.hasLegacySummonTriggers() else { return false }
         _ = try replaceSummonAnimations(mod.summonSelections(), in: resources, account: account, mod: mod)
         return true
+    }
+
+    private func repairSummonAnimations(in resources: ResourceReuse, account: String,
+                                        report: (SwitchProgress) -> Void) throws {
+        let mod = try SkyStrikerMod(resources: resources, account: account)
+        try mod.requireSummonReady()
+        guard try mod.summonResourcesNeedRepair() else { return }
+        do {
+            _ = try replaceSummonAnimations(mod.summonSelections(), in: resources, account: account, mod: mod)
+        } catch {
+            let reason = error.localizedDescription
+            _ = try replaceSummonAnimations([], in: resources, account: account, mod: mod)
+            report(.artworkWarning("游戏更新后部分演出资源无法重建，已恢复原演出。\(reason)"))
+        }
     }
 
     private func replaceSummonAnimations(_ selected: Set<SummonAnimation>, in resources: ResourceReuse,

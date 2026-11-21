@@ -6,8 +6,8 @@
 
 | 平台 | 安装包 | 需要准备 |
 | --- | --- | --- |
-| Windows 10 / 11 x64 | [下载 ZIP](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.21/DuelShelf-Windows-x64-0.9.21.zip) | 安装 Steam 和《Master Duel》 |
-| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.21/DuelShelf-macOS-arm64-0.9.21.dmg) | 在同一个 CrossOver 容器里安装 Steam 和《Master Duel》 |
+| Windows 10 / 11 x64 | [下载 ZIP](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.22/DuelShelf-Windows-x64-0.9.22.zip) | 安装 Steam 和《Master Duel》 |
+| macOS 13+ · Apple Silicon | [下载 DMG](https://github.com/oldwangnewbe/md-switcher/releases/download/v0.9.22/DuelShelf-macOS-arm64-0.9.22.dmg) | 在同一个 CrossOver 容器里安装 Steam 和《Master Duel》 |
 
 ## Windows 怎么用
 
@@ -47,6 +47,7 @@
 - 如果官方更新覆盖了超框登记表，下载完成后退出游戏，再用决斗匣的「启动 MD」启动。对贴图仍在的卡，决斗匣会用新版官方表补回超框登记。如果贴图也被更新覆盖，请重新应用对应异画。
 - **动态镜碎**：选中账号，在「动态镜碎」按卡片或合集开启。保持决斗匣运行，下次从决斗匣或 Steam 启动游戏时会自动加载。效果仅在本机显示。
 - **卡片演出**：在「卡片演出」按卡名或画款编号查找。可替换已有的召唤或发动演出，也可为符合条件的卡新增召唤演出。支持恢复原演出。
+- 官方更新后，如果卡片演出卡住，等游戏下载完更新，退出游戏，再用决斗匣的「启动 MD」。决斗匣会检查已安装的演出，尝试用新版官方资源重建。重建失败时会尝试恢复原演出。
 
 > 异画和动画会修改本地资源，动态镜碎会向游戏进程加载 DLL。请先备份并核对游戏与平台条款。游戏更新可能导致功能失效，运营方也可能限制账号使用。项目供个人学习和非商业使用，安装包不附带游戏素材。
 
