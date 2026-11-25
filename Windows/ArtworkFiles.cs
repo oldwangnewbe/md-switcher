@@ -57,17 +57,31 @@ internal static class ArtworkFiles
 
     public static Performance[] AppliedPerformances(string cache) => ReadState(cache).Performances ?? [];
 
+    public static bool HasOutdatedDuelResources(string cache)
+    {
+        var state = ReadState(cache);
+        if (state.OverFrame is null && state.PerformanceFiles is not { Count: > 0 }) return false;
+        var index = GameResources.ReadIndex(cache).Items.ToDictionary(entry => entry.Name);
+        if (PerformancesNeedRepair(cache, state, index)) return true;
+        if (state.OverFrame is not { Cards.Count: > 0 } registration) return false;
+        return !index.TryGetValue(registration.Gate, out var gate) || OriginalWhenModified(cache, gate) is null;
+    }
+
+    private static bool PerformancesNeedRepair(string cache, EditState state,
+                                              IReadOnlyDictionary<string, GameResources.Entry> index) =>
+        state.PerformanceFiles is { } files && files.Any(file =>
+        {
+            var asset = GameResources.AssetPath(cache, file.Key);
+            return !File.Exists(asset) || HashFile(asset) != file.Value ||
+                index.TryGetValue(file.Key, out var entry) && OriginalWhenModified(cache, entry) is null;
+        });
+
     public static bool RepairPerformances(string cache, CardEngine engine, Action ensureGameClosed)
     {
         var state = ReadState(cache);
         if (state.PerformanceFiles is not { Count: > 0 }) return true;
         var index = GameResources.ReadIndex(cache).Items.ToDictionary(entry => entry.Name);
-        if (state.PerformanceFiles.All(file =>
-        {
-            var asset = GameResources.AssetPath(cache, file.Key);
-            if (!File.Exists(asset) || HashFile(asset) != file.Value) return false;
-            return !index.TryGetValue(file.Key, out var entry) || OriginalWhenModified(cache, entry) is not null;
-        })) return true;
+        if (!PerformancesNeedRepair(cache, state, index)) return true;
 
         try
         {

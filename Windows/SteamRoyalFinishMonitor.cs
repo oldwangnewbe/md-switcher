@@ -52,6 +52,28 @@ internal sealed class SteamRoyalFinishMonitor(Installation install, string state
     private (long Length, DateTime Written)? version;
     private SteamGameLaunch? current;
     private SteamGameLaunch? handled;
+    private readonly GameResourceUpdateMonitor resourceUpdates = new();
+    private SteamGameLaunch? accountLaunch;
+    private ulong? resourceAccount;
+
+    public bool PollResourceUpdate(ResourceSettings? settings)
+    {
+        var launch = ReadLaunch();
+        if (launch != accountLaunch)
+        {
+            accountLaunch = launch;
+            resourceAccount = null;
+        }
+        if (launch is null || settings is null) return false;
+        if (resourceAccount is null)
+        {
+            if (!TryVerifyProcess(launch, out _)) return false;
+            resourceAccount = new SteamSession(install, stateDirectory).ActiveAccount();
+        }
+        if (resourceAccount is not ulong account) return false;
+        var cache = GameResources.ActiveCache(install, settings, account);
+        return cache is not null && resourceUpdates.Poll(launch, cache) && TryVerifyProcess(launch, out _);
+    }
 
     public string? Poll(IReadOnlyDictionary<ulong, int[]> selections)
     {
@@ -118,5 +140,32 @@ internal sealed class SteamRoyalFinishMonitor(Installation install, string state
         {
             return false;
         }
+    }
+}
+
+// Observe the running game's index and leave resource writes to the prelaunch repair.
+internal sealed class GameResourceUpdateMonitor
+{
+    private SteamGameLaunch? session;
+    private (string Cache, long Length, DateTime Created, DateTime Written)? seen;
+    private bool warned;
+
+    public bool Poll(SteamGameLaunch launch, string cache)
+    {
+        if (session != launch)
+        {
+            session = launch;
+            seen = null;
+            warned = false;
+        }
+        if (warned) return false;
+        var file = new FileInfo(GameResources.AssetPath(cache, GameResources.Index));
+        if (!file.Exists || file.LastWriteTimeUtc < launch.LocalTime.ToUniversalTime()) return false;
+        var stamp = (cache, file.Length, file.CreationTimeUtc, file.LastWriteTimeUtc);
+        if (stamp == seen) return false;
+        var outdated = ArtworkFiles.HasOutdatedDuelResources(cache);
+        seen = stamp;
+        warned = outdated;
+        return outdated;
     }
 }

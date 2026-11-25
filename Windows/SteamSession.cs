@@ -109,17 +109,10 @@ internal sealed partial class SteamSession(Installation install, string state)
 
         RequireGameClosed();
         string? artworkCache = null;
-        if (resources is not null)
+        if (resources is not null && GameResources.ActiveCache(install, resources, account.Id) is string cache)
         {
-            var folder = resources.MainAccount == account.Id ? resources.MainFolder : resources.Accounts.GetValueOrDefault(account.Id);
-            if (folder is not null)
-            {
-                var cache = GameResources.CacheLocation(install, folder);
-                var main = GameResources.CacheLocation(install, resources.MainFolder);
-                if (account.Id == resources.MainAccount || SharedCache.IsLinkedTo(cache, main)) cache = main;
-                ArtworkFiles.RecoverPending(cache, RequireGameClosed);
-                artworkCache = cache;
-            }
+            ArtworkFiles.RecoverPending(cache, RequireGameClosed);
+            artworkCache = cache;
         }
         if (resources is not null && resources.MainAccount != account.Id && resources.Accounts.ContainsKey(account.Id))
         {

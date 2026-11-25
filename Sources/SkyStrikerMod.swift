@@ -212,6 +212,23 @@ struct SkyStrikerMod {
 
     func summonResourcesNeedRepair() throws -> Bool {
         let current = try state()
+        return try summonResourcesNeedRepair(current)
+    }
+
+    func hasOutdatedDuelResources() throws -> Bool {
+        let current = try state()
+        if try summonResourcesNeedRepair(current) { return true }
+        guard let registration = current.overFrames, !registration.cards.isEmpty,
+              let saved = current.files[registration.gate] else { return false }
+        let resources = ResourceReuse(root: account.deletingLastPathComponent())
+        let index = try resources.catalog(cache)
+        guard let gate = index.informations.first(where: { $0.assetName == registration.gate }),
+              saved.original.map(artworkDigest) == gate.crc,
+              let live = try readFile(assetURL(registration.gate, allowMissingFolder: true)) else { return true }
+        return !saved.replacements.contains(artworkDigest(live))
+    }
+
+    private func summonResourcesNeedRepair(_ current: State) throws -> Bool {
         guard let paths = current.performancePaths, !paths.isEmpty else { return false }
         let resources = ResourceReuse(root: account.deletingLastPathComponent())
         let index = try resources.catalog(cache)

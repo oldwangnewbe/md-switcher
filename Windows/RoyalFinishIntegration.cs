@@ -46,7 +46,7 @@ internal sealed partial class MainWindow
 
     private async Task PollRoyalFinishAsync()
     {
-        if (checkingRoyal || busy || install is not { } current || royalSettingsError is not null) return;
+        if (checkingRoyal || busy || install is not { } current) return;
         if (royalMonitor is not { } existing || existing.Install != current)
         {
             royalMonitor = (current, new SteamRoyalFinishMonitor(current, StateDirectory));
@@ -56,14 +56,25 @@ internal sealed partial class MainWindow
         try
         {
             var monitor = royalMonitor.Value.Monitor;
-            var selections = royalSettings.Accounts;
-            var result = await Task.Run(() => monitor.Poll(selections));
+            var selections = royalSettingsError is null ? royalSettings.Accounts : null;
+            var resources = CurrentResources;
+            var outdated = await Task.Run(() => monitor.PollResourceUpdate(resources));
+            if (outdated && !IsDisposed && install == current)
+            {
+                const string message = "游戏运行时下载了更新，部分卡图或演出已失配。请退出游戏，再点决斗匣的「启动 MD」修复。";
+                status.Text = message;
+                if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+                Activate();
+                MessageBox.Show(this, message, "游戏资源已更新", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            var result = selections is null || selections.Count == 0 ? null : await Task.Run(() => monitor.Poll(selections));
             if (result is not null) ShowResult(result);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException
-            or TimeoutException or System.ComponentModel.Win32Exception)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
+            or TimeoutException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException)
         {
-            var message = $"动态镜碎未加载。{error.Message}";
+            var message = $"检查游戏状态失败。{error.Message}";
             if (royalLoadResult != message) ShowResult(message);
         }
         finally { checkingRoyal = false; }

@@ -392,6 +392,13 @@ enum CoreChecks {
         ]
         try JSONSerialization.data(withJSONObject: stale).write(to: journal)
         try expect(try mainMod.summonResourcesNeedRepair())
+        let updates = GameResourceUpdateMonitor()
+        let game = SteamGameProcess(pid: 1, launchLine: "[2020-01-01 00:00:00] AppID 1449850 adding PID 1")
+        try expect(!updates.poll(game: nil, resources: reuse, folders: ["aaaa1111"]))
+        let laterGame = SteamGameProcess(pid: 2, launchLine: "[2100-01-01 00:00:00] AppID 1449850 adding PID 2")
+        try expect(!updates.poll(game: laterGame, resources: reuse, folders: ["aaaa1111"]))
+        try expect(updates.poll(game: game, resources: reuse, folders: ["aaaa1111"]))
+        try expect(!updates.poll(game: game, resources: reuse, folders: ["aaaa1111"]))
         client.active = ["steam.exe"]
         client.onActiveAccount = { firstID }
         client.onGameLaunch = {
@@ -402,6 +409,8 @@ enum CoreChecks {
         try switcher.changeAccount(to: firstID, launchGame: true, knownResourceFolder: "aaaa1111")
         try expect(try mainMod.summonSelections().isEmpty)
         try expect(try !mainMod.summonResourcesNeedRepair())
+        try expect(!updates.poll(game: SteamGameProcess(pid: 3, launchLine: game.launchLine),
+                                 resources: reuse, folders: ["aaaa1111"]))
         print("PASS an overwritten performance catalog falls back safely before launch when assets cannot be rebuilt")
     }
 

@@ -102,6 +102,7 @@ final class SwitcherModel: ObservableObject {
     }
     private let worker = DispatchQueue(label: "md-switcher")
     private let steamRoyalFinishMonitor = SteamRoyalFinishMonitor()
+    private let gameResourceUpdateMonitor = GameResourceUpdateMonitor()
     private var steamMonitorTimer: Timer?
     private var checkingSteamLaunch = false
     var selected: SteamAccount? { accounts.first(where: { $0.id == selectedID }) }
@@ -136,18 +137,39 @@ final class SwitcherModel: ObservableObject {
     }
 
     private func checkSteamLaunch() {
-        guard !busy, !recoveryNeeded, !checkingSteamLaunch, !royalFinishByAccount.isEmpty,
-              let installation else { return }
+        guard !busy, !recoveryNeeded, !checkingSteamLaunch, let installation else { return }
+        let prefix = installation.bottle.path + "|"
+        var folders = Set(resourceFolders.filter { $0.key.hasPrefix(prefix) }.values)
+        if let source = artworkSource(for: installation) { folders.insert(source) }
+        guard !royalFinishByAccount.isEmpty || !folders.isEmpty else { return }
         checkingSteamLaunch = true
         let switcher = Switcher(installation: installation)
         let monitor = steamRoyalFinishMonitor
+        let updates = gameResourceUpdateMonitor
+        let watchedFolders = folders
         let selections = royalFinishByAccount
         worker.async { [weak self] in
-            let result = Result { try monitor.poll(switcher: switcher, selections: selections) }
+            let outdated = switcher.resources.map { resources in
+                let game = try? monitor.activeGame(in: installation)
+                return updates.poll(game: game, resources: resources, folders: watchedFolders)
+            } ?? false
+            let result = Result { try !selections.isEmpty && monitor.poll(switcher: switcher, selections: selections) }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 checkingSteamLaunch = false
                 guard !busy, self.installation?.game == installation.game else { return }
+                if outdated {
+                    let message = "游戏运行时下载了更新，部分卡图或演出已失配。请退出游戏，再点决斗匣的「启动 MD」修复。"
+                    status = message
+                    error = true
+                    let alert = NSAlert()
+                    alert.messageText = "游戏资源已更新"
+                    alert.informativeText = message
+                    alert.addButton(withTitle: "知道了")
+                    NSApp.activate(ignoringOtherApps: true)
+                    alert.runModal()
+                    return
+                }
                 switch result {
                 case .success(true):
                     error = false

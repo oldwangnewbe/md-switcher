@@ -24,6 +24,15 @@ internal static partial class GameResources
 
     public static string Root(Installation install) => Path.Combine(install.Game, "LocalData");
 
+    public static string? ActiveCache(Installation install, ResourceSettings settings, ulong account)
+    {
+        if (account == settings.MainAccount) return CacheLocation(install, settings.MainFolder);
+        if (!settings.Accounts.TryGetValue(account, out var folder)) return null;
+        var target = CacheLocation(install, folder);
+        var source = CacheLocation(install, settings.MainFolder);
+        return SharedCache.IsLinkedTo(target, source) ? source : target;
+    }
+
     public static string Identify(Installation install, string folder)
     {
         var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
